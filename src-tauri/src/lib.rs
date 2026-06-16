@@ -14,25 +14,21 @@ fn get_output_devices() -> Vec<String> {
 #[tauri::command]
 fn start_passthrough(output_name: String, state: tauri::State<AppState>) -> Result<(), String> {
     let (resp_tx, resp_rx) = std::sync::mpsc::channel();
-    state
-        .sender
-        .lock()
+    state.send_command(AudioCommand::Start {
+        output_name,
+        respond: resp_tx,
+    })?;
+    resp_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| e.to_string())?
-        .send(AudioCommand::Start {
-            output_name,
-            respond: resp_tx,
-        })
-        .map_err(|e| e.to_string())?;
-    resp_rx.recv().map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn stop_passthrough(state: tauri::State<AppState>) -> Result<(), String> {
-    state
-        .sender
-        .lock()
-        .map_err(|e| e.to_string())?
-        .send(AudioCommand::Stop)
+    let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+    state.send_command(AudioCommand::Stop { respond: resp_tx })?;
+    resp_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| e.to_string())
 }
 

@@ -17,6 +17,8 @@ pub fn list_output_devices() -> Vec<DeviceInfo> {
     }
 }
 
+// NOTE: the "cable" hint is broad and could match some physical devices
+// (e.g. "Coaxial Cable"). Acceptable for the skeleton's auto-detect default.
 /// Case-insensitive substring match of any hint against the device name.
 /// Returns the first device whose name contains any of the hints.
 pub fn find_virtual_output<'a>(

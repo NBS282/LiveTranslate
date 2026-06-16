@@ -8,7 +8,9 @@ pub enum AudioCommand {
         output_name: String,
         respond: Sender<Result<(), String>>,
     },
-    Stop,
+    /// Stop carries a response channel so callers can wait until the streams
+    /// are actually dropped (avoids a start-after-stop device race on Windows).
+    Stop { respond: Sender<()> },
 }
 
 /// App state: a handle to the dedicated audio thread.
@@ -17,7 +19,7 @@ pub enum AudioCommand {
 /// owned, and dropped on a single thread. We never store the Stream in shared
 /// state; instead AppState holds a channel Sender (which is Send + Sync).
 pub struct AppState {
-    pub sender: Mutex<Sender<AudioCommand>>,
+    sender: Mutex<Sender<AudioCommand>>,
 }
 
 impl Default for AppState {
@@ -46,9 +48,10 @@ impl AppState {
                             let _ = respond.send(Err(e));
                         }
                     },
-                    AudioCommand::Stop => {
+                    AudioCommand::Stop { respond } => {
                         // Dropping the Passthrough stops the streams, on this thread.
                         current = None;
+                        let _ = respond.send(());
                     }
                 }
             }
@@ -56,5 +59,14 @@ impl AppState {
         AppState {
             sender: Mutex::new(tx),
         }
+    }
+
+    /// Sends a command to the audio thread. Returns Err if the channel is closed.
+    pub fn send_command(&self, cmd: AudioCommand) -> Result<(), String> {
+        self.sender
+            .lock()
+            .map_err(|e| e.to_string())?
+            .send(cmd)
+            .map_err(|e| e.to_string())
     }
 }

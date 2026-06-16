@@ -33,6 +33,10 @@ pub fn start(output_name: &str) -> Result<Passthrough, String> {
         .default_input_config()
         .map_err(|e| e.to_string())?
         .into();
+    // NOTE: we reuse the input device's StreamConfig for the output stream. If the
+    // output device has a different clock/sample rate, the producer and consumer
+    // drift, causing silent over/underflow. Acceptable for the skeleton; the
+    // translation engine (Plan 2) will own proper resampling/format negotiation.
 
     let buf = latency_samples(150.0, config.sample_rate.0, config.channels);
     let ring = HeapRb::<f32>::new(buf * 2);
