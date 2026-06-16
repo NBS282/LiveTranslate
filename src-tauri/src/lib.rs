@@ -1,5 +1,6 @@
 mod audio;
 mod state;
+mod translation;
 
 use state::{AppState, AudioCommand};
 
