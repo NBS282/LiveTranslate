@@ -8,20 +8,41 @@ pub struct TranslationOutput {
     pub text: String,
 }
 
-// Hibiki-Zero produces exactly one WAV per run. If a future version emits
-// multiple, refine selection (this returns the first .wav found).
+fn has_ext(p: &Path, ext: &str) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case(ext))
+        .unwrap_or(false)
+}
+
+fn name_contains(p: &Path, needle: &str) -> bool {
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase().contains(needle))
+        .unwrap_or(false)
+}
+
 /// Picks the translated audio file from the files produced in the work dir.
-/// Returns the first `.wav` (case-insensitive) found.
+/// Hibiki-Zero emits both a `_stereo.wav` and a `_mono.wav`; prefer stereo,
+/// then mono, then any `.wav`.
 pub fn pick_output_wav(files: &[PathBuf]) -> Option<PathBuf> {
+    let wavs: Vec<&PathBuf> = files.iter().filter(|p| has_ext(p, "wav")).collect();
+    wavs.iter()
+        .find(|p| name_contains(p, "stereo"))
+        .or_else(|| wavs.iter().find(|p| name_contains(p, "mono")))
+        .or_else(|| wavs.first())
+        .map(|p| (*p).clone())
+}
+
+/// Reads the translated text from the `.txt` file Hibiki-Zero writes alongside
+/// the audio (the text is NOT printed to stdout). Empty string if none found.
+pub fn read_translated_text(files: &[PathBuf]) -> String {
     files
         .iter()
-        .find(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("wav"))
-                .unwrap_or(false)
-        })
-        .cloned()
+        .find(|p| has_ext(p, "txt"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Path to the hibiki-zero executable. Override with HIBIKI_ZERO_BIN; otherwise
@@ -118,7 +139,7 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
             return Err("translator produced no .wav output".to_string());
         }
     };
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let text = read_translated_text(&produced);
 
     Ok(TranslationOutput { output_wav, text })
 }
@@ -143,6 +164,39 @@ mod tests {
     fn none_when_no_wav() {
         let files = vec![PathBuf::from("a.txt"), PathBuf::from("b.mp3")];
         assert_eq!(pick_output_wav(&files), None);
+    }
+
+    #[test]
+    fn prefers_stereo_over_mono() {
+        let files = vec![
+            PathBuf::from("0_clip_mono.wav"),
+            PathBuf::from("0_clip_stereo.wav"),
+            PathBuf::from("0_clip.txt"),
+        ];
+        assert_eq!(
+            pick_output_wav(&files),
+            Some(PathBuf::from("0_clip_stereo.wav"))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_mono_when_no_stereo() {
+        let files = vec![PathBuf::from("0_clip_mono.wav")];
+        assert_eq!(
+            pick_output_wav(&files),
+            Some(PathBuf::from("0_clip_mono.wav"))
+        );
+    }
+
+    #[test]
+    fn reads_text_from_txt_file() {
+        let dir = std::env::temp_dir().join(format!("lt-txt-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let txt = dir.join("out.txt");
+        std::fs::write(&txt, "  Hello world  ").unwrap();
+        let files = vec![dir.join("out.wav"), txt.clone()];
+        assert_eq!(read_translated_text(&files), "Hello world");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
