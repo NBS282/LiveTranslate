@@ -1,7 +1,20 @@
+use cpal::traits::{DeviceTrait, HostTrait};
+
 /// A discoverable audio output device, identified by its display name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceInfo {
     pub name: String,
+}
+
+/// Lists the names of all available output devices on the default host.
+pub fn list_output_devices() -> Vec<DeviceInfo> {
+    let host = cpal::default_host();
+    match host.output_devices() {
+        Ok(devices) => devices
+            .filter_map(|d| d.name().ok().map(|name| DeviceInfo { name }))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Case-insensitive substring match of any hint against the device name.
