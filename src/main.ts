@@ -1,22 +1,33 @@
 import { invoke } from "@tauri-apps/api/core";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+const select = document.querySelector<HTMLSelectElement>("#device")!;
+const toggle = document.querySelector<HTMLButtonElement>("#toggle")!;
+const status = document.querySelector<HTMLParagraphElement>("#status")!;
+let running = false;
 
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+async function loadDevices() {
+  const devices = await invoke<string[]>("get_output_devices");
+  select.replaceChildren();
+  for (const name of devices) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
-  });
+toggle.addEventListener("click", async () => {
+  if (!running) {
+    await invoke("start_passthrough", { outputName: select.value });
+    running = true;
+    toggle.textContent = "Stop";
+    status.textContent = `Running -> ${select.value}`;
+  } else {
+    await invoke("stop_passthrough");
+    running = false;
+    toggle.textContent = "Start";
+    status.textContent = "Stopped";
+  }
 });
+
+loadDevices();
