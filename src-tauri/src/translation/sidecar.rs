@@ -8,6 +8,8 @@ pub struct TranslationOutput {
     pub text: String,
 }
 
+// Hibiki-Zero produces exactly one WAV per run. If a future version emits
+// multiple, refine selection (this returns the first .wav found).
 /// Picks the translated audio file from the files produced in the work dir.
 /// Returns the first `.wav` (case-insensitive) found.
 pub fn pick_output_wav(files: &[PathBuf]) -> Option<PathBuf> {
@@ -22,17 +24,27 @@ pub fn pick_output_wav(files: &[PathBuf]) -> Option<PathBuf> {
         .cloned()
 }
 
-/// Path to the hibiki-zero executable. Override with HIBIKI_ZERO_BIN (used by tests
-/// and to point at the user's environment); defaults to the project-local venv.
+/// Path to the hibiki-zero executable. Override with HIBIKI_ZERO_BIN; otherwise
+/// resolves the project-local venv against the repo root (parent of src-tauri).
 pub fn hibiki_zero_bin() -> String {
-    if let Ok(p) = std::env::var("HIBIKI_ZERO_BIN") {
+    resolve_hibiki_zero_bin(std::env::var("HIBIKI_ZERO_BIN").ok())
+}
+
+fn resolve_hibiki_zero_bin(override_val: Option<String>) -> String {
+    if let Some(p) = override_val {
         return p;
     }
-    if cfg!(windows) {
-        ".venv-hibiki/Scripts/hibiki-zero.exe".to_string()
+    // CARGO_MANIFEST_DIR is the src-tauri/ dir; the repo root is its parent.
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let rel = if cfg!(windows) {
+        ".venv-hibiki/Scripts/hibiki-zero.exe"
     } else {
-        ".venv-hibiki/bin/hibiki-zero".to_string()
-    }
+        ".venv-hibiki/bin/hibiki-zero"
+    };
+    repo_root.join(rel).to_string_lossy().into_owned()
 }
 
 /// Builds the (program, args) to translate `input`, writing output into `out_dir`.
@@ -56,7 +68,30 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
     if !input.exists() {
         return Err(format!("input file not found: {}", input.display()));
     }
-    let out_dir = std::env::temp_dir().join(format!("livetranslate-tr-{}", std::process::id()));
+
+    let ext_ok = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "wav" | "mp3" | "flac" | "ogg" | "m4a"
+            )
+        })
+        .unwrap_or(false);
+    if !ext_ok {
+        return Err(format!("unsupported audio file type: {}", input.display()));
+    }
+
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let out_dir = std::env::temp_dir().join(format!(
+        "livetranslate-tr-{}-{}",
+        std::process::id(),
+        unique
+    ));
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
     let (program, args) = build_command(input, &out_dir);
@@ -65,6 +100,7 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
     })?;
 
     if !output.status.success() {
+        let _ = std::fs::remove_dir_all(&out_dir);
         return Err(format!(
             "translation failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
@@ -75,7 +111,13 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .collect();
-    let output_wav = pick_output_wav(&produced).ok_or("translator produced no .wav output")?;
+    let output_wav = match pick_output_wav(&produced) {
+        Some(w) => w,
+        None => {
+            let _ = std::fs::remove_dir_all(&out_dir);
+            return Err("translator produced no .wav output".to_string());
+        }
+    };
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     Ok(TranslationOutput { output_wav, text })
@@ -118,9 +160,21 @@ mod command_tests {
     }
 
     #[test]
-    fn hibiki_zero_bin_respects_env_override() {
-        std::env::set_var("HIBIKI_ZERO_BIN", "/custom/hibiki-zero");
-        assert_eq!(hibiki_zero_bin(), "/custom/hibiki-zero");
-        std::env::remove_var("HIBIKI_ZERO_BIN");
+    fn resolve_respects_override() {
+        assert_eq!(
+            resolve_hibiki_zero_bin(Some("/custom/hibiki-zero".to_string())),
+            "/custom/hibiki-zero"
+        );
+    }
+
+    #[test]
+    fn resolve_defaults_to_venv_under_repo_root() {
+        let got = resolve_hibiki_zero_bin(None);
+        assert!(got.contains(".venv-hibiki"));
+        assert!(got.ends_with(if cfg!(windows) {
+            "hibiki-zero.exe"
+        } else {
+            "hibiki-zero"
+        }));
     }
 }

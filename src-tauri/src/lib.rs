@@ -40,9 +40,13 @@ struct TranslationFileResult {
 }
 
 #[tauri::command]
-fn translate_file(input_path: String) -> Result<TranslationFileResult, String> {
-    let out = translation::sidecar::translate_file(std::path::Path::new(&input_path))?;
-    Ok(TranslationFileResult {
+async fn translate_file(input_path: String) -> Result<TranslationFileResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        translation::sidecar::translate_file(std::path::Path::new(&input_path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|out| TranslationFileResult {
         output_wav: out.output_wav.to_string_lossy().into_owned(),
         text: out.text,
     })
