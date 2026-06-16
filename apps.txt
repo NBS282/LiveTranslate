@@ -1,0 +1,11 @@
+handy:
+
+https://github.com/cjpais/Handy.git
+
+voicebox:
+
+https://github.com/jamiepine/voicebox.git
+
+personaplex nvidea:
+
+https://github.com/NVIDIA/personaplex.git
