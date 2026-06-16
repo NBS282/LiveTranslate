@@ -1,0 +1,34 @@
+# Tooling cache
+.atl/
+
+# Rust / Tauri
+/target/
+**/target/
+src-tauri/target/
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Models (large binaries — never commit)
+*.safetensors
+*.gguf
+*.bin
+models/
