@@ -46,3 +46,7 @@ lerna-debug.log*
 *.gguf
 *.bin
 models/
+
+# Hibiki-Zero python sidecar env + translation outputs
+.venv-hibiki/
+translations/

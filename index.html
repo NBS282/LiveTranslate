@@ -15,6 +15,17 @@
       <select id="device"></select>
       <button id="toggle">Start</button>
       <p id="status">Stopped</p>
+      <hr />
+      <section>
+        <h2>Offline translation test</h2>
+        <button id="pick">Choose Spanish audio…</button>
+        <span id="chosen">No file</span>
+        <button id="translate" disabled>Translate</button>
+        <p id="tr-status"></p>
+        <audio id="player" controls></audio>
+        <pre id="tr-text"></pre>
+      </section>
+      <script type="module" src="/src/translate.ts"></script>
     </main>
   </body>
 </html>

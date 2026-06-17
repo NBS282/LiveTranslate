@@ -1,5 +1,6 @@
 mod audio;
 mod state;
+mod translation;
 
 use state::{AppState, AudioCommand};
 
@@ -32,15 +33,36 @@ fn stop_passthrough(state: tauri::State<AppState>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+struct TranslationFileResult {
+    output_wav: String,
+    text: String,
+}
+
+#[tauri::command]
+async fn translate_file(input_path: String) -> Result<TranslationFileResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        translation::sidecar::translate_file(std::path::Path::new(&input_path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(|out| TranslationFileResult {
+        output_wav: out.output_wav.to_string_lossy().into_owned(),
+        text: out.text,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             get_output_devices,
             start_passthrough,
-            stop_passthrough
+            stop_passthrough,
+            translate_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
