@@ -5,11 +5,14 @@ import wave
 
 # NLLB uses FLORES-200 codes like "spa_Latn", "eng_Latn".
 _NLLB_CODE = {"es": "spa_Latn", "en": "eng_Latn"}
+_VALID_NLLB = {"spa_Latn", "eng_Latn", "por_Latn", "fra_Latn", "deu_Latn"}
 
 
 def normalize_lang(code: str) -> str:
-    """Accept either a short code ('es') or a full NLLB code ('spa_Latn')."""
+    """Map a short code ('es') to its NLLB code, or validate a full NLLB code."""
     if "_" in code:
+        if code not in _VALID_NLLB:
+            raise ValueError(f"unknown NLLB code: {code}")
         return code
     if code in _NLLB_CODE:
         return _NLLB_CODE[code]

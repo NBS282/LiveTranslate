@@ -14,3 +14,8 @@ def test_full_code_passthrough():
 def test_unknown_short_code_raises():
     with pytest.raises(ValueError):
         normalize_lang("zz")
+
+
+def test_unknown_full_code_raises():
+    with pytest.raises(ValueError):
+        normalize_lang("foo_Bar")

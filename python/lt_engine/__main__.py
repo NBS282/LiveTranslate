@@ -29,6 +29,10 @@ def main() -> int:
     source_text = transcribe(args.file)
     print(f"      source: {source_text}", flush=True)
 
+    if not source_text.strip():
+        print("transcription produced no text", file=sys.stderr)
+        return 1
+
     print(f"[2/3] Translating {src} -> {tgt} ...", flush=True)
     translated_text = translate(source_text, src, tgt)
     print(f"      translation: {translated_text}", flush=True)

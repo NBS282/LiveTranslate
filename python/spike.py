@@ -11,7 +11,9 @@ import sys
 import time
 import traceback
 
-AUDIO = sys.argv[1] if len(sys.argv) > 1 else r"C:\Users\Nicob\Downloads\WhatsApp-Ptt-2026-06-16-at-5.01.52-PM.wav"
+if len(sys.argv) < 2:
+    sys.exit("usage: python spike.py <path-to-spanish-audio.wav>")
+AUDIO = sys.argv[1]
 PIPER_VOICE = "en_US-lessac-medium"  # download first: python -m piper.download_voices en_US-lessac-medium
 
 print(f"Audio sample: {AUDIO}\n")
