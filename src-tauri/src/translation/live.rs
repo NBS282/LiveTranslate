@@ -122,9 +122,10 @@ fn run_producer(
 ) -> Result<(), String> {
     use webrtc_vad::{SampleRate, Vad, VadMode};
 
-    // ~700 ms trailing silence closes a phrase (23 × 30 ms = 690 ms).
-    // Require at least 10 voiced frames (~300 ms) to emit the segment.
-    let mut segmenter = Segmenter::new(23, 10);
+    // VAD cadence: ~400ms trailing silence closes a phrase (13 * 30ms),
+    // ~180ms minimum voiced (6 * 30ms) to emit. Lower silence = more responsive,
+    // but too low risks cutting mid-phrase. Tune here.
+    let mut segmenter = Segmenter::new(13, 6);
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
 
     // Channel from the cpal callback (runs on an OS audio thread) to our loop below.
