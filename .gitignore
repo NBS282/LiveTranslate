@@ -57,3 +57,9 @@ translations/
 python/_out/
 spike_out.wav
 tts_test.wav
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
