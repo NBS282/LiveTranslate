@@ -36,6 +36,17 @@ pub fn parse_translate_response(body: &str) -> Result<TranslationOutput, String>
     })
 }
 
+/// Returns true if a server is already responding on /health.
+pub fn is_server_up() -> bool {
+    let client = reqwest::blocking::Client::new();
+    client
+        .get(format!("{}/health", base_url()))
+        .timeout(std::time::Duration::from_millis(800))
+        .send()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
 /// Spawns the FastAPI server as a child process.
 pub fn spawn_server() -> Result<Child, String> {
     let program = crate::translation::sidecar::engine_python();

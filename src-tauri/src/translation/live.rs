@@ -51,6 +51,12 @@ fn run_worker(rx: Receiver<Vec<i16>>, app: AppHandle, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(samples) => {
+                // Defense-in-depth: discard segments shorter than 0.5s (8000 samples at 16 kHz).
+                // Parakeet returns HTTP 500 on very short audio; the VAD min-voiced guard above
+                // is the first line of defense, this is the fallback.
+                if samples.len() < 8_000 {
+                    continue;
+                }
                 let evt = match write_segment_wav(&samples).and_then(|p| {
                     let result = crate::translation::engine_server::translate(&p);
                     let _ = std::fs::remove_file(&p);
@@ -123,9 +129,9 @@ fn run_producer(
     use webrtc_vad::{SampleRate, Vad, VadMode};
 
     // VAD cadence: ~400ms trailing silence closes a phrase (13 * 30ms),
-    // ~180ms minimum voiced (6 * 30ms) to emit. Lower silence = more responsive,
+    // ~360ms minimum voiced (12 * 30ms) to emit. Lower silence = more responsive,
     // but too low risks cutting mid-phrase. Tune here.
-    let mut segmenter = Segmenter::new(13, 6);
+    let mut segmenter = Segmenter::new(13, 12);
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
 
     // Channel from the cpal callback (runs on an OS audio thread) to our loop below.

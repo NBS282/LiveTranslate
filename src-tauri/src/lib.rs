@@ -84,12 +84,12 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let state = app.state::<AppState>();
-            match translation::engine_server::spawn_server() {
-                Ok(child) => {
-                    *state.server.lock().unwrap() = Some(child);
-                }
-                Err(e) => {
-                    eprintln!("could not spawn translation server: {e}");
+            if translation::engine_server::is_server_up() {
+                // Reuse an already-running server (e.g. left over from a previous dev run).
+            } else {
+                match translation::engine_server::spawn_server() {
+                    Ok(child) => { *state.server.lock().unwrap() = Some(child); }
+                    Err(e) => { eprintln!("could not spawn translation server: {e}"); }
                 }
             }
             std::thread::spawn(|| {
