@@ -1,4 +1,5 @@
 use crate::audio::passthrough::{self, Passthrough};
+use std::process::Child;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 
@@ -20,6 +21,7 @@ pub enum AudioCommand {
 /// state; instead AppState holds a channel Sender (which is Send + Sync).
 pub struct AppState {
     sender: Mutex<Sender<AudioCommand>>,
+    pub server: Mutex<Option<Child>>,
 }
 
 impl Default for AppState {
@@ -58,6 +60,7 @@ impl AppState {
         });
         AppState {
             sender: Mutex::new(tx),
+            server: Mutex::new(None),
         }
     }
 
@@ -68,5 +71,15 @@ impl AppState {
             .map_err(|e| e.to_string())?
             .send(cmd)
             .map_err(|e| e.to_string())
+    }
+}
+
+impl Drop for AppState {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.server.lock() {
+            if let Some(mut child) = g.take() {
+                let _ = child.kill();
+            }
+        }
     }
 }

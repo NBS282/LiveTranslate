@@ -60,6 +60,26 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .setup(|app| {
+            use tauri::Manager;
+            let state = app.state::<AppState>();
+            match translation::engine_server::spawn_server() {
+                Ok(child) => {
+                    *state.server.lock().unwrap() = Some(child);
+                }
+                Err(e) => {
+                    eprintln!("could not spawn translation server: {e}");
+                }
+            }
+            std::thread::spawn(|| {
+                if let Err(e) = translation::engine_server::wait_until_ready(
+                    std::time::Duration::from_secs(120),
+                ) {
+                    eprintln!("translation server not ready: {e}");
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_output_devices,
             start_passthrough,
