@@ -54,6 +54,27 @@ async fn translate_file(input_path: String) -> Result<TranslationFileResult, Str
     })
 }
 
+#[tauri::command]
+fn start_live_translation(
+    device_name: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let session = translation::live::start(&device_name, app)?;
+    *state.live.lock().map_err(|e| e.to_string())? = Some(session);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_live_translation(state: tauri::State<AppState>) {
+    if let Ok(mut g) = state.live.lock() {
+        if let Some(sess) = g.take() {
+            sess.stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -84,7 +105,9 @@ pub fn run() {
             get_output_devices,
             start_passthrough,
             stop_passthrough,
-            translate_file
+            translate_file,
+            start_live_translation,
+            stop_live_translation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
