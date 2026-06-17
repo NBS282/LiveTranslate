@@ -50,3 +50,10 @@ models/
 # Hibiki-Zero python sidecar env + translation outputs
 .venv-hibiki/
 translations/
+
+# Piper voices + spike/test outputs
+*.onnx
+*.onnx.json
+python/_out/
+spike_out.wav
+tts_test.wav
