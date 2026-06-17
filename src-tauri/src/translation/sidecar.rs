@@ -1,90 +1,71 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Result of a successful offline translation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranslationOutput {
     pub output_wav: PathBuf,
-    pub text: String,
+    pub source_text: String,
+    pub translated_text: String,
 }
 
-fn has_ext(p: &Path, ext: &str) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case(ext))
-        .unwrap_or(false)
+/// Parses the engine's result.json content into (source_text, translated_text).
+pub fn parse_result_json(s: &str) -> Result<(String, String), String> {
+    let v: serde_json::Value = serde_json::from_str(s).map_err(|e| e.to_string())?;
+    let src = v
+        .get("source_text")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tgt = v
+        .get("translated_text")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok((src, tgt))
 }
 
-fn name_contains(p: &Path, needle: &str) -> bool {
-    p.file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.to_ascii_lowercase().contains(needle))
-        .unwrap_or(false)
-}
-
-/// Picks the translated audio file from the files produced in the work dir.
-/// Hibiki-Zero emits both a `_stereo.wav` and a `_mono.wav`; prefer stereo,
-/// then mono, then any `.wav`.
-pub fn pick_output_wav(files: &[PathBuf]) -> Option<PathBuf> {
-    let wavs: Vec<&PathBuf> = files.iter().filter(|p| has_ext(p, "wav")).collect();
-    wavs.iter()
-        .find(|p| name_contains(p, "stereo"))
-        .or_else(|| wavs.iter().find(|p| name_contains(p, "mono")))
-        .or_else(|| wavs.first())
-        .map(|p| (*p).clone())
-}
-
-/// Reads the translated text from the `.txt` file Hibiki-Zero writes alongside
-/// the audio (the text is NOT printed to stdout). Empty string if none found.
-pub fn read_translated_text(files: &[PathBuf]) -> String {
-    files
-        .iter()
-        .find(|p| has_ext(p, "txt"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
-}
-
-/// Path to the hibiki-zero executable. Override with HIBIKI_ZERO_BIN; otherwise
-/// resolves the project-local venv against the repo root (parent of src-tauri).
-pub fn hibiki_zero_bin() -> String {
-    resolve_hibiki_zero_bin(std::env::var("HIBIKI_ZERO_BIN").ok())
-}
-
-fn resolve_hibiki_zero_bin(override_val: Option<String>) -> String {
-    if let Some(p) = override_val {
-        return p;
-    }
-    // CARGO_MANIFEST_DIR is the src-tauri/ dir; the repo root is its parent.
-    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let rel = if cfg!(windows) {
-        ".venv-hibiki/Scripts/hibiki-zero.exe"
-    } else {
-        ".venv-hibiki/bin/hibiki-zero"
-    };
-    repo_root.join(rel).to_string_lossy().into_owned()
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Builds the (program, args) to translate `input`, writing output into `out_dir`.
+/// Python interpreter of the engine venv. Override with LT_ENGINE_PYTHON.
+fn engine_python() -> String {
+    if let Ok(p) = std::env::var("LT_ENGINE_PYTHON") {
+        return p;
+    }
+    let rel = if cfg!(windows) {
+        ".venv-engine/Scripts/python.exe"
+    } else {
+        ".venv-engine/bin/python"
+    };
+    repo_root().join(rel).to_string_lossy().into_owned()
+}
+
+/// Directory containing the `lt_engine` package (repo `python/`), used as cwd so `-m lt_engine` resolves.
+fn python_dir() -> PathBuf {
+    repo_root().join("python")
+}
+
+/// (program, args) to run the modular engine, writing output into out_dir.
 pub fn build_command(input: &Path, out_dir: &Path) -> (String, Vec<String>) {
     (
-        hibiki_zero_bin(),
+        engine_python(),
         vec![
-            "generate".to_string(),
+            "-m".to_string(),
+            "lt_engine".to_string(),
             "--file".to_string(),
             input.to_string_lossy().into_owned(),
             "--out-dir".to_string(),
             out_dir.to_string_lossy().into_owned(),
-            "--bf16".to_string(),
         ],
     )
 }
 
-/// Translates `input` to English audio + text via the Hibiki-Zero sidecar.
-/// Writes output into a fresh temp dir and locates the produced wav.
+/// Translates `input` to English audio + text via the lt_engine modular engine.
+/// Writes output into a fresh temp dir and reads the produced wav + result.json.
 pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
     if !input.exists() {
         return Err(format!("input file not found: {}", input.display()));
@@ -116,9 +97,13 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
     let (program, args) = build_command(input, &out_dir);
-    let output = Command::new(&program).args(&args).output().map_err(|e| {
-        format!("failed to start translator '{program}': {e}. Is the hibiki-zero venv set up?")
-    })?;
+    let output = std::process::Command::new(&program)
+        .args(&args)
+        .current_dir(python_dir())
+        .output()
+        .map_err(|e| {
+            format!("failed to start engine '{program}': {e}. Is the .venv-engine set up?")
+        })?;
 
     if !output.status.success() {
         let _ = std::fs::remove_dir_all(&out_dir);
@@ -128,75 +113,45 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
         ));
     }
 
-    let produced: Vec<PathBuf> = std::fs::read_dir(&out_dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
-    let output_wav = match pick_output_wav(&produced) {
-        Some(w) => w,
-        None => {
-            let _ = std::fs::remove_dir_all(&out_dir);
-            return Err("translator produced no .wav output".to_string());
-        }
-    };
-    let text = read_translated_text(&produced);
+    let wav = out_dir.join("output.wav");
+    if !wav.exists() {
+        let _ = std::fs::remove_dir_all(&out_dir);
+        return Err("engine produced no output.wav".to_string());
+    }
 
-    Ok(TranslationOutput { output_wav, text })
+    let json = std::fs::read_to_string(out_dir.join("result.json"))
+        .map_err(|e| format!("failed to read result.json: {e}"))?;
+    let (source_text, translated_text) = parse_result_json(&json)?;
+
+    Ok(TranslationOutput {
+        output_wav: wav,
+        source_text,
+        translated_text,
+    })
 }
 
 #[cfg(test)]
-mod tests {
+mod json_tests {
     use super::*;
 
     #[test]
-    fn picks_the_wav_among_other_files() {
-        let files = vec![PathBuf::from("log.txt"), PathBuf::from("out_en.wav")];
-        assert_eq!(pick_output_wav(&files), Some(PathBuf::from("out_en.wav")));
+    fn parses_both_texts() {
+        let (s, t) =
+            parse_result_json(r#"{"source_text":"hola","translated_text":"hello"}"#).unwrap();
+        assert_eq!(s, "hola");
+        assert_eq!(t, "hello");
     }
 
     #[test]
-    fn case_insensitive_extension() {
-        let files = vec![PathBuf::from("OUT.WAV")];
-        assert_eq!(pick_output_wav(&files), Some(PathBuf::from("OUT.WAV")));
+    fn missing_fields_default_empty() {
+        let (s, t) = parse_result_json("{}").unwrap();
+        assert_eq!(s, "");
+        assert_eq!(t, "");
     }
 
     #[test]
-    fn none_when_no_wav() {
-        let files = vec![PathBuf::from("a.txt"), PathBuf::from("b.mp3")];
-        assert_eq!(pick_output_wav(&files), None);
-    }
-
-    #[test]
-    fn prefers_stereo_over_mono() {
-        let files = vec![
-            PathBuf::from("0_clip_mono.wav"),
-            PathBuf::from("0_clip_stereo.wav"),
-            PathBuf::from("0_clip.txt"),
-        ];
-        assert_eq!(
-            pick_output_wav(&files),
-            Some(PathBuf::from("0_clip_stereo.wav"))
-        );
-    }
-
-    #[test]
-    fn falls_back_to_mono_when_no_stereo() {
-        let files = vec![PathBuf::from("0_clip_mono.wav")];
-        assert_eq!(
-            pick_output_wav(&files),
-            Some(PathBuf::from("0_clip_mono.wav"))
-        );
-    }
-
-    #[test]
-    fn reads_text_from_txt_file() {
-        let dir = std::env::temp_dir().join(format!("lt-txt-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let txt = dir.join("out.txt");
-        std::fs::write(&txt, "  Hello world  ").unwrap();
-        let files = vec![dir.join("out.wav"), txt.clone()];
-        assert_eq!(read_translated_text(&files), "Hello world");
-        let _ = std::fs::remove_dir_all(&dir);
+    fn invalid_json_errors() {
+        assert!(parse_result_json("not json").is_err());
     }
 }
 
@@ -205,30 +160,11 @@ mod command_tests {
     use super::*;
 
     #[test]
-    fn build_command_has_generate_file_outdir_bf16() {
+    fn build_command_runs_lt_engine_module() {
         let (_program, args) = build_command(Path::new("in.wav"), Path::new("out"));
         assert_eq!(
             args,
-            vec!["generate", "--file", "in.wav", "--out-dir", "out", "--bf16"]
+            vec!["-m", "lt_engine", "--file", "in.wav", "--out-dir", "out"]
         );
-    }
-
-    #[test]
-    fn resolve_respects_override() {
-        assert_eq!(
-            resolve_hibiki_zero_bin(Some("/custom/hibiki-zero".to_string())),
-            "/custom/hibiki-zero"
-        );
-    }
-
-    #[test]
-    fn resolve_defaults_to_venv_under_repo_root() {
-        let got = resolve_hibiki_zero_bin(None);
-        assert!(got.contains(".venv-hibiki"));
-        assert!(got.ends_with(if cfg!(windows) {
-            "hibiki-zero.exe"
-        } else {
-            "hibiki-zero"
-        }));
     }
 }

@@ -25,13 +25,14 @@ pick.addEventListener("click", async () => {
 translate.addEventListener("click", async () => {
   if (!inputPath) return;
   translate.disabled = true;
-  status.textContent = "Translating… (first run downloads the model)";
+  status.textContent = "Translating… (CPU; first run loads models, can take a bit)";
   try {
-    const res = await invoke<{ output_wav: string; text: string }>("translate_file", {
-      inputPath,
-    });
+    const res = await invoke<{ output_wav: string; source_text: string; translated_text: string }>(
+      "translate_file",
+      { inputPath },
+    );
     player.src = convertFileSrc(res.output_wav);
-    text.textContent = res.text || "(no text returned)";
+    text.textContent = `ES: ${res.source_text}\nEN: ${res.translated_text}`;
     status.textContent = "Done.";
   } catch (e) {
     status.textContent = `Error: ${e}`;

@@ -36,7 +36,8 @@ fn stop_passthrough(state: tauri::State<AppState>) -> Result<(), String> {
 #[derive(serde::Serialize)]
 struct TranslationFileResult {
     output_wav: String,
-    text: String,
+    source_text: String,
+    translated_text: String,
 }
 
 #[tauri::command]
@@ -46,9 +47,10 @@ async fn translate_file(input_path: String) -> Result<TranslationFileResult, Str
     })
     .await
     .map_err(|e| e.to_string())?
-    .map(|out| TranslationFileResult {
-        output_wav: out.output_wav.to_string_lossy().into_owned(),
-        text: out.text,
+    .map(|o| TranslationFileResult {
+        output_wav: o.output_wav.to_string_lossy().into_owned(),
+        source_text: o.source_text,
+        translated_text: o.translated_text,
     })
 }
 
