@@ -22,6 +22,7 @@ pub enum AudioCommand {
 pub struct AppState {
     sender: Mutex<Sender<AudioCommand>>,
     pub server: Mutex<Option<Child>>,
+    pub live: Mutex<Option<crate::translation::live::LiveSession>>,
 }
 
 impl Default for AppState {
@@ -61,6 +62,7 @@ impl AppState {
         AppState {
             sender: Mutex::new(tx),
             server: Mutex::new(None),
+            live: Mutex::new(None),
         }
     }
 
@@ -76,6 +78,11 @@ impl AppState {
 
 impl Drop for AppState {
     fn drop(&mut self) {
+        if let Ok(mut g) = self.live.lock() {
+            if let Some(sess) = g.take() {
+                sess.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         if let Ok(mut g) = self.server.lock() {
             if let Some(mut child) = g.take() {
                 let _ = child.kill();

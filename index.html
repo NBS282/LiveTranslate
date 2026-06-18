@@ -26,6 +26,16 @@
         <pre id="tr-text"></pre>
       </section>
       <script type="module" src="/src/translate.ts"></script>
+      <hr />
+      <section>
+        <h2>Live translation</h2>
+        <label for="live-device">Input mic:</label>
+        <select id="live-device"></select>
+        <button id="live-toggle">Listen</button>
+        <p id="live-status">Idle</p>
+        <ul id="phrases"></ul>
+      </section>
+      <script type="module" src="/src/live.ts"></script>
     </main>
   </body>
 </html>
