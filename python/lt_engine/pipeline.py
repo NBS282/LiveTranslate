@@ -3,7 +3,7 @@
 Models are loaded lazily on first use and kept in module-level singletons
 so the server process pays the load cost only once.
 
-Translation uses Helsinki-NLP/opus-mt-tc-big-es-en, a MarianMT model trained
+Translation uses Helsinki-NLP/opus-mt-es-en, a MarianMT model trained
 specifically for ES->EN. It outperforms the general-purpose NLLB-200-distilled
 on this language pair and is faster at inference (dedicated model, smaller vocab).
 """
@@ -38,7 +38,7 @@ def _get_mt():
     global _mt
     if _mt is None:
         from transformers import MarianMTModel, MarianTokenizer
-        name = "Helsinki-NLP/opus-mt-tc-big-es-en"
+        name = "Helsinki-NLP/opus-mt-es-en"
         _mt = (MarianTokenizer.from_pretrained(name), MarianMTModel.from_pretrained(name))
     return _mt
 
