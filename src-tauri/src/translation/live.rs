@@ -190,6 +190,94 @@ fn run_producer(
     Ok(())
 }
 
+fn convert_channels(samples: &[f32], from_ch: usize, to_ch: usize) -> Vec<f32> {
+    match (from_ch, to_ch) {
+        (1, 2) => samples.iter().flat_map(|&s| [s, s]).collect(),
+        (2, 1) => samples
+            .chunks(2)
+            .map(|c| (c[0] + c.get(1).copied().unwrap_or(0.0)) / 2.0)
+            .collect(),
+        _ => samples.to_vec(),
+    }
+}
+
+fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> Result<(), String> {
+    // --- Read WAV ---
+    let mut reader = hound::WavReader::open(wav_path).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+    let wav_rate = spec.sample_rate as usize;
+    let wav_channels = spec.channels as usize;
+
+    let samples_f32: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+        hound::SampleFormat::Int => {
+            let max = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+            reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| s as f32 / max)
+                .collect()
+        }
+    };
+
+    // --- Find device ---
+    let host = cpal::default_host();
+    let device = if output_device_name.is_empty() {
+        host.default_output_device()
+    } else {
+        host.output_devices()
+            .map_err(|e| e.to_string())?
+            .find(|d| d.name().map(|n| n == output_device_name).unwrap_or(false))
+            .or_else(|| host.default_output_device())
+    }
+    .ok_or_else(|| "no output device available".to_string())?;
+
+    let native_cfg = device.default_output_config().map_err(|e| e.to_string())?;
+    let native_rate = native_cfg.sample_rate().0 as usize;
+    let native_channels = native_cfg.channels() as usize;
+
+    // --- Resample ---
+    let resampled = if native_rate != wav_rate {
+        let mut r = SimpleResampler::new(wav_rate, native_rate);
+        r.process(&samples_f32)
+    } else {
+        samples_f32
+    };
+
+    // --- Channel conversion ---
+    let final_samples = convert_channels(&resampled, wav_channels, native_channels);
+    let duration_secs = final_samples.len() as f32 / native_rate as f32 / native_channels as f32;
+
+    // --- Build and play stream ---
+    let samples = std::sync::Arc::new(std::sync::Mutex::new(final_samples.into_iter()));
+    let samples_cb = std::sync::Arc::clone(&samples);
+
+    let stream_cfg = cpal::StreamConfig {
+        channels: native_channels as u16,
+        sample_rate: cpal::SampleRate(native_rate as u32),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
+    let stream = device
+        .build_output_stream(
+            &stream_cfg,
+            move |data: &mut [f32], _| {
+                let mut iter = samples_cb.lock().unwrap();
+                for d in data.iter_mut() {
+                    *d = iter.next().unwrap_or(0.0);
+                }
+            },
+            |e| eprintln!("playback stream error: {e}"),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+    stream.play().map_err(|e| e.to_string())?;
+    std::thread::sleep(std::time::Duration::from_secs_f32(duration_secs + 0.1));
+
+    Ok(())
+}
+
 /// Minimal linear interpolation resampler adequate for 16 kHz VAD/STT input.
 /// rubato (declared in Cargo.toml) is available for a higher-quality replacement.
 struct SimpleResampler {
@@ -219,5 +307,46 @@ impl SimpleResampler {
             self.last = x;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn mono_to_stereo_duplicates_each_sample() {
+        let mono = vec![0.5f32, -0.3, 0.1];
+        let stereo = convert_channels(&mono, 1, 2);
+        assert_eq!(stereo, vec![0.5, 0.5, -0.3, -0.3, 0.1, 0.1]);
+    }
+
+    #[test]
+    fn stereo_to_mono_averages_pairs() {
+        let stereo = vec![0.6f32, -0.6, 0.2, 0.4];
+        let mono = convert_channels(&stereo, 2, 1);
+        assert!(
+            (mono[0] - 0.0).abs() < 1e-5,
+            "expected 0.0, got {}",
+            mono[0]
+        );
+        assert!(
+            (mono[1] - 0.3).abs() < 1e-5,
+            "expected 0.3, got {}",
+            mono[1]
+        );
+    }
+
+    #[test]
+    fn same_channel_count_is_passthrough() {
+        let samples = vec![0.1f32, 0.2, 0.3];
+        assert_eq!(convert_channels(&samples, 1, 1), samples);
+    }
+
+    #[test]
+    fn play_nonexistent_wav_returns_err() {
+        let result = play_wav_to_device(Path::new("does_not_exist_xyz.wav"), "");
+        assert!(result.is_err(), "expected Err for missing WAV file");
     }
 }
