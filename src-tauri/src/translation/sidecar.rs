@@ -25,9 +25,22 @@ pub fn parse_result_json(s: &str) -> Result<(String, String), String> {
 }
 
 pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    // Explicit override — required for packaged/installed builds.
+    if let Ok(p) = std::env::var("LT_ENGINE_ROOT") {
+        return PathBuf::from(p);
+    }
+    // Dev builds: CARGO_MANIFEST_DIR is set at compile time and points to src-tauri/.
+    let compile_time = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    if compile_time.exists() {
+        return compile_time;
+    }
+    // Packaged fallback: resolve relative to the running executable.
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
