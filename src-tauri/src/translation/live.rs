@@ -46,20 +46,63 @@ fn write_segment_wav(samples: &[i16]) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Drains any extra segments already queued behind `first`, returning the most
+/// recent one and the number dropped. Translation on CPU is slower than real
+/// time, so segments pile up during long speech; keeping only the latest bounds
+/// the live latency instead of letting it grow without limit.
+fn drain_to_latest(rx: &Receiver<Vec<i16>>, first: Vec<i16>) -> (Vec<i16>, usize) {
+    let mut latest = first;
+    let mut dropped = 0;
+    while let Ok(newer) = rx.try_recv() {
+        latest = newer;
+        dropped += 1;
+    }
+    (latest, dropped)
+}
+
+/// Playback thread: plays each translated WAV to `output_device` serially, then
+/// deletes the file and its temp dir. Kept separate from the worker so playback
+/// (which runs at ~real time) never blocks translation of the next segment.
+fn run_playback(rx: Receiver<PathBuf>, stop: Arc<AtomicBool>, output_device: String) {
+    while !stop.load(Ordering::Relaxed) {
+        match rx.recv_timeout(std::time::Duration::from_millis(250)) {
+            Ok(wav) => {
+                if let Err(e) = play_wav_to_device(&wav, &output_device) {
+                    eprintln!("playback error: {e}");
+                }
+                let _ = std::fs::remove_file(&wav);
+                if let Some(dir) = wav.parent() {
+                    let _ = std::fs::remove_dir(dir);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        }
+    }
+}
+
 /// Worker thread: consumes segments from `rx`, translates each, emits a "phrase" event,
-/// then plays the TTS audio to `output_device`. Playback errors are non-fatal.
+/// then hands the TTS audio to the playback thread via `play_tx`. Translation of the
+/// next segment proceeds without waiting for playback to finish.
 fn run_worker(
     rx: Receiver<Vec<i16>>,
     app: AppHandle,
     stop: Arc<AtomicBool>,
-    output_device: String,
+    play_tx: Sender<PathBuf>,
 ) {
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(samples) => {
+                // Stay current: if requests fell behind and segments queued up,
+                // keep only the most recent and drop the stale ones.
+                let (samples, dropped) = drain_to_latest(&rx, samples);
+                if dropped > 0 {
+                    eprintln!("live: dropped {dropped} stale segment(s) to stay current");
+                }
+
                 // Defense-in-depth: discard segments shorter than 0.5s (8000 samples at 16 kHz).
-                // Parakeet returns HTTP 500 on very short audio; the VAD min-voiced guard above
-                // is the first line of defense, this is the fallback.
+                // Whisper hallucinates or returns no text on very short clips; the VAD
+                // min-voiced guard is the first line of defense, this is the fallback.
                 if samples.len() < 8_000 {
                     continue;
                 }
@@ -69,7 +112,7 @@ fn run_worker(
                     result
                 });
 
-                // 422 "transcription produced no text" means Parakeet got audio but found
+                // 422 "transcription produced no text" means Whisper got audio but found
                 // no speech — silence, breath, or mic bleed. Skip the event silently.
                 if let Err(ref e) = translate_result {
                     if e.contains("transcription produced no text") {
@@ -91,15 +134,11 @@ fn run_worker(
                 };
                 let _ = app.emit("phrase", evt);
 
-                if let Ok(ref out) = translate_result {
-                    if let Err(e) = play_wav_to_device(&out.output_wav, &output_device) {
-                        eprintln!("playback error: {e}");
-                    }
-                    // Clean up output WAV and its temp parent dir after playback.
-                    let _ = std::fs::remove_file(&out.output_wav);
-                    if let Some(dir) = out.output_wav.parent() {
-                        let _ = std::fs::remove_dir(dir);
-                    }
+                if let Ok(out) = translate_result {
+                    // Hand off to the playback thread so the next segment can be
+                    // translated while this one plays. The playback thread owns
+                    // cleanup of the WAV and its temp dir.
+                    let _ = play_tx.send(out.output_wav);
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -128,14 +167,21 @@ pub fn start(
     let channels = default_config.channels() as usize;
 
     let (seg_tx, seg_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
+    let (play_tx, play_rx): (Sender<PathBuf>, Receiver<PathBuf>) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    // Worker thread: translate segments, emit events, play audio.
+    // Playback thread: plays translated audio serially, decoupled from translation.
+    {
+        let stop_clone = stop.clone();
+        let output_device = output_device_name.to_string();
+        std::thread::spawn(move || run_playback(play_rx, stop_clone, output_device));
+    }
+
+    // Worker thread: translate segments, emit events, enqueue audio for playback.
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
-        let output_device = output_device_name.to_string();
-        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, output_device));
+        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, play_tx));
     }
 
     // Producer thread: capture → resample → VAD → segment → send.
@@ -163,7 +209,8 @@ fn run_producer(
     // VAD cadence: ~400ms trailing silence closes a phrase (13 * 30ms),
     // ~360ms minimum voiced (12 * 30ms) to emit. Lower silence = more responsive,
     // but too low risks cutting mid-phrase. Tune here.
-    let mut segmenter = Segmenter::new(13, 12);
+    // silence_close=13 (~390ms), min_voiced=12 (~360ms), max_frames=167 (~5s force cut)
+    let mut segmenter = Segmenter::new(13, 12, 167);
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
 
     // Channel from the cpal callback (runs on an OS audio thread) to our loop below.
@@ -380,5 +427,23 @@ mod tests {
     fn play_nonexistent_wav_returns_err() {
         let result = play_wav_to_device(Path::new("does_not_exist_xyz.wav"), "");
         assert!(result.is_err(), "expected Err for missing WAV file");
+    }
+
+    #[test]
+    fn drain_keeps_latest_and_counts_dropped() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(vec![2i16]).unwrap();
+        tx.send(vec![3i16]).unwrap();
+        let (latest, dropped) = drain_to_latest(&rx, vec![1i16]);
+        assert_eq!(latest, vec![3i16]);
+        assert_eq!(dropped, 2);
+    }
+
+    #[test]
+    fn drain_no_backlog_returns_first_unchanged() {
+        let (_tx, rx) = std::sync::mpsc::channel::<Vec<i16>>();
+        let (latest, dropped) = drain_to_latest(&rx, vec![9i16]);
+        assert_eq!(latest, vec![9i16]);
+        assert_eq!(dropped, 0);
     }
 }
