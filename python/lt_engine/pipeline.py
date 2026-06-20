@@ -2,29 +2,18 @@
 
 Models are loaded lazily on first use and kept in module-level singletons
 so the server process pays the load cost only once.
+
+Translation uses Helsinki-NLP/opus-mt-es-en, a MarianMT model trained
+specifically for ES->EN. It outperforms the general-purpose NLLB-200-distilled
+on this language pair and is faster at inference (dedicated model, smaller vocab).
 """
 from __future__ import annotations
 import os
 import wave
 
-# NLLB uses FLORES-200 codes like "spa_Latn", "eng_Latn".
-_NLLB_CODE = {"es": "spa_Latn", "en": "eng_Latn"}
-_VALID_NLLB = {"spa_Latn", "eng_Latn", "por_Latn", "fra_Latn", "deu_Latn"}
-
 _asr = None
-_nllb = None
+_mt = None
 _piper = None
-
-
-def normalize_lang(code: str) -> str:
-    """Map a short code ('es') to its NLLB code, or validate a full NLLB code."""
-    if "_" in code:
-        if code not in _VALID_NLLB:
-            raise ValueError(f"unknown NLLB code: {code}")
-        return code
-    if code in _NLLB_CODE:
-        return _NLLB_CODE[code]
-    raise ValueError(f"unknown language code: {code}")
 
 
 def _piper_voice_path() -> str:
@@ -45,13 +34,13 @@ def _get_asr():
     return _asr
 
 
-def _get_nllb():
-    global _nllb
-    if _nllb is None:
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        name = "facebook/nllb-200-distilled-600M"
-        _nllb = (AutoTokenizer.from_pretrained(name), AutoModelForSeq2SeqLM.from_pretrained(name))
-    return _nllb
+def _get_mt():
+    global _mt
+    if _mt is None:
+        from transformers import MarianMTModel, MarianTokenizer
+        name = "Helsinki-NLP/opus-mt-es-en"
+        _mt = (MarianTokenizer.from_pretrained(name), MarianMTModel.from_pretrained(name))
+    return _mt
 
 
 def _get_piper():
@@ -69,16 +58,11 @@ def transcribe(audio_path: str) -> str:
     return getattr(item, "text", item)
 
 
-def translate(text: str, src: str, tgt: str) -> str:
-    """Translate text from src to tgt language using NLLB-200 (CPU)."""
-    tok, model = _get_nllb()
-    tok.src_lang = src
-    inputs = tok(text, return_tensors="pt")
-    gen = model.generate(
-        **inputs,
-        forced_bos_token_id=tok.convert_tokens_to_ids(tgt),
-        max_length=512,
-    )
+def translate(text: str) -> str:
+    """Translate Spanish text to English using opus-mt-tc-big-es-en (CPU)."""
+    tok, model = _get_mt()
+    inputs = tok([text], return_tensors="pt", padding=True, truncation=True, max_length=512)
+    gen = model.generate(**inputs)
     return tok.batch_decode(gen, skip_special_tokens=True)[0]
 
 
@@ -92,7 +76,7 @@ def synthesize(text: str, out_wav: str) -> None:
 def warmup() -> None:
     """Load all models eagerly. Call once at server startup."""
     _get_asr()
-    _get_nllb()
+    _get_mt()
     _get_piper()
 
 
@@ -107,8 +91,8 @@ def translate_audio(
     Args:
         input_path: Path to the source WAV file.
         out_dir: Directory where output.wav will be written.
-        src: Source language short code or NLLB code.
-        tgt: Target language short code or NLLB code.
+        src: Unused — model is ES->EN only, kept for API compatibility.
+        tgt: Unused — model is ES->EN only, kept for API compatibility.
 
     Returns:
         dict with keys: output_wav, source_text, translated_text.
@@ -117,14 +101,12 @@ def translate_audio(
         ValueError: if transcription produces no text.
     """
     os.makedirs(out_dir, exist_ok=True)
-    s = normalize_lang(src)
-    t = normalize_lang(tgt)
 
     source_text = transcribe(input_path)
     if not source_text.strip():
         raise ValueError("transcription produced no text")
 
-    translated_text = translate(source_text, s, t)
+    translated_text = translate(source_text)
     out_wav = os.path.join(out_dir, "output.wav")
     synthesize(translated_text, out_wav)
 
