@@ -46,8 +46,14 @@ fn write_segment_wav(samples: &[i16]) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Worker thread: consumes segments from `rx`, translates each, and emits a "phrase" event.
-fn run_worker(rx: Receiver<Vec<i16>>, app: AppHandle, stop: Arc<AtomicBool>) {
+/// Worker thread: consumes segments from `rx`, translates each, emits a "phrase" event,
+/// then plays the TTS audio to `output_device`. Playback errors are non-fatal.
+fn run_worker(
+    rx: Receiver<Vec<i16>>,
+    app: AppHandle,
+    stop: Arc<AtomicBool>,
+    output_device: String,
+) {
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(samples) => {
@@ -57,23 +63,36 @@ fn run_worker(rx: Receiver<Vec<i16>>, app: AppHandle, stop: Arc<AtomicBool>) {
                 if samples.len() < 8_000 {
                     continue;
                 }
-                let evt = match write_segment_wav(&samples).and_then(|p| {
+                let translate_result = write_segment_wav(&samples).and_then(|p| {
                     let result = crate::translation::engine_server::translate(&p);
                     let _ = std::fs::remove_file(&p);
                     result
-                }) {
+                });
+
+                let evt = match &translate_result {
                     Ok(out) => PhraseEvent {
-                        source_text: out.source_text,
-                        translated_text: out.translated_text,
+                        source_text: out.source_text.clone(),
+                        translated_text: out.translated_text.clone(),
                         error: None,
                     },
                     Err(e) => PhraseEvent {
                         source_text: String::new(),
                         translated_text: String::new(),
-                        error: Some(e),
+                        error: Some(e.clone()),
                     },
                 };
                 let _ = app.emit("phrase", evt);
+
+                if let Ok(ref out) = translate_result {
+                    if let Err(e) = play_wav_to_device(&out.output_wav, &output_device) {
+                        eprintln!("playback error: {e}");
+                    }
+                    // Clean up output WAV and its temp parent dir after playback.
+                    let _ = std::fs::remove_file(&out.output_wav);
+                    if let Some(dir) = out.output_wav.parent() {
+                        let _ = std::fs::remove_dir(dir);
+                    }
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => break,
@@ -83,7 +102,11 @@ fn run_worker(rx: Receiver<Vec<i16>>, app: AppHandle, stop: Arc<AtomicBool>) {
 
 /// Starts continuous capture on `device_name`, spawns producer + worker threads.
 /// Returns a `LiveSession` whose `stop` flag can be set to end both threads.
-pub fn start(device_name: &str, app: AppHandle) -> Result<LiveSession, String> {
+pub fn start(
+    device_name: &str,
+    output_device_name: &str,
+    app: AppHandle,
+) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
         .input_devices()
@@ -99,11 +122,12 @@ pub fn start(device_name: &str, app: AppHandle) -> Result<LiveSession, String> {
     let (seg_tx, seg_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
 
-    // Worker thread: translate segments and emit events.
+    // Worker thread: translate segments, emit events, play audio.
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
-        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone));
+        let output_device = output_device_name.to_string();
+        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, output_device));
     }
 
     // Producer thread: capture → resample → VAD → segment → send.
