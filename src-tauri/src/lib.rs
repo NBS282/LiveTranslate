@@ -57,10 +57,11 @@ async fn translate_file(input_path: String) -> Result<TranslationFileResult, Str
 #[tauri::command]
 fn start_live_translation(
     device_name: String,
+    output_device_name: String,
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
-    let session = translation::live::start(&device_name, app)?;
+    let session = translation::live::start(&device_name, &output_device_name, app)?;
     *state.live.lock().map_err(|e| e.to_string())? = Some(session);
     Ok(())
 }
