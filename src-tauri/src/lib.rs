@@ -41,8 +41,18 @@ struct TranslationFileResult {
 }
 
 #[tauri::command]
-async fn translate_file(input_path: String) -> Result<TranslationFileResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn translate_file(
+    input_path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<TranslationFileResult, String> {
+    // Clean up the temp dir from the previous offline translation before starting a new one.
+    if let Ok(mut prev) = state.last_translation_out.lock() {
+        if let Some(dir) = prev.take() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
         translation::sidecar::translate_file(std::path::Path::new(&input_path))
     })
     .await
@@ -51,7 +61,15 @@ async fn translate_file(input_path: String) -> Result<TranslationFileResult, Str
         output_wav: o.output_wav.to_string_lossy().into_owned(),
         source_text: o.source_text,
         translated_text: o.translated_text,
-    })
+    })?;
+
+    // Track the new temp dir so it gets cleaned up on the next call.
+    if let Ok(mut prev) = state.last_translation_out.lock() {
+        let wav = std::path::PathBuf::from(&result.output_wav);
+        *prev = wav.parent().map(|p| p.to_path_buf());
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]

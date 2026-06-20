@@ -1,4 +1,5 @@
 use crate::audio::passthrough::{self, Passthrough};
+use std::path::PathBuf;
 use std::process::Child;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
@@ -23,6 +24,8 @@ pub struct AppState {
     sender: Mutex<Sender<AudioCommand>>,
     pub server: Mutex<Option<Child>>,
     pub live: Mutex<Option<crate::translation::live::LiveSession>>,
+    /// Temp dir created by the last offline translate_file call. Cleaned up before the next one.
+    pub last_translation_out: Mutex<Option<PathBuf>>,
 }
 
 impl Default for AppState {
@@ -63,6 +66,7 @@ impl AppState {
             sender: Mutex::new(tx),
             server: Mutex::new(None),
             live: Mutex::new(None),
+            last_translation_out: Mutex::new(None),
         }
     }
 

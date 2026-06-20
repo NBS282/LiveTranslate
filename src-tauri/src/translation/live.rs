@@ -69,6 +69,14 @@ fn run_worker(
                     result
                 });
 
+                // 422 "transcription produced no text" means Parakeet got audio but found
+                // no speech — silence, breath, or mic bleed. Skip the event silently.
+                if let Err(ref e) = translate_result {
+                    if e.contains("transcription produced no text") {
+                        continue;
+                    }
+                }
+
                 let evt = match &translate_result {
                     Ok(out) => PhraseEvent {
                         source_text: out.source_text.clone(),
