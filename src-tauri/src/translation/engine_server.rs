@@ -10,17 +10,21 @@ pub fn kill_process_on_port() {
     let port = port();
     #[cfg(target_os = "windows")]
     {
-        // netstat → find PID → taskkill
-        if let Ok(out) = Command::new("netstat").args(["-ano"]).output() {
+        use std::os::windows::process::CommandExt;
+        const NO_WINDOW: u32 = 0x08000000;
+
+        let mut netstat = Command::new("netstat");
+        netstat.args(["-ano"]).creation_flags(NO_WINDOW);
+        if let Ok(out) = netstat.output() {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
                 if line.contains(&format!(":{port} ")) && line.contains("LISTENING") {
                     if let Some(pid_str) = line.split_whitespace().last() {
                         if let Ok(pid) = pid_str.parse::<u32>() {
-                            let _ = Command::new("taskkill")
-                                .args(["/F", "/PID", &pid.to_string()])
-                                .output();
-                            // Give the process time to release the port.
+                            let mut kill = Command::new("taskkill");
+                            kill.args(["/F", "/PID", &pid.to_string()])
+                                .creation_flags(NO_WINDOW);
+                            let _ = kill.output();
                             std::thread::sleep(Duration::from_millis(300));
                         }
                     }
@@ -90,16 +94,20 @@ pub fn spawn_server() -> Result<Child, String> {
     kill_process_on_port();
     let program = crate::translation::sidecar::engine_python();
     let cwd = crate::translation::sidecar::python_dir();
-    let mut child = Command::new(&program)
-        .args(["-m", "lt_engine.server"])
+    let mut cmd = Command::new(&program);
+    cmd.args(["-m", "lt_engine.server"])
         .current_dir(cwd)
-        // Tell the Python server where the Piper voice model lives.
-        // pipeline.py also checks this env var before falling back to its own path logic.
         .env(
             "PIPER_VOICE",
             crate::setup::piper_voice_path().to_string_lossy().as_ref(),
         )
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to spawn translation server '{program}': {e}"))?;
 

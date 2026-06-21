@@ -159,13 +159,19 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     // Extract with Windows built-in tar (Win 10 v1803+).
     emit_progress(app, "Extracting Python runtime", 5, "");
-    let out = std::process::Command::new("tar")
-        .args([
-            "-xzf",
-            &archive.to_string_lossy(),
-            "-C",
-            &engine_root.to_string_lossy(),
-        ])
+    let mut tar_cmd = std::process::Command::new("tar");
+    tar_cmd.args([
+        "-xzf",
+        &archive.to_string_lossy(),
+        "-C",
+        &engine_root.to_string_lossy(),
+    ]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        tar_cmd.creation_flags(0x08000000);
+    }
+    let out = tar_cmd
         .output()
         .map_err(|e| format!("tar not found (requires Windows 10 v1803+): {e}"))?;
 
@@ -189,10 +195,14 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     // Bootstrap pip (not included in install_only variant).
     emit_progress(app, "Bootstrapping pip", 8, "");
-    let bootstrap = std::process::Command::new(&lt_exe)
-        .args(["-m", "ensurepip", "--upgrade"])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut pip_bootstrap = std::process::Command::new(&lt_exe);
+    pip_bootstrap.args(["-m", "ensurepip", "--upgrade"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        pip_bootstrap.creation_flags(0x08000000);
+    }
+    let bootstrap = pip_bootstrap.output().map_err(|e| e.to_string())?;
     if !bootstrap.status.success() {
         return Err(format!(
             "ensurepip failed: {}",
@@ -257,9 +267,16 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     if !python.exists() && !is_production() {
         emit_progress(app, "Creating Python environment", 5, "");
         let root = crate::translation::sidecar::repo_root();
-        let out = std::process::Command::new("python")
+        let mut venv_cmd = std::process::Command::new("python");
+        venv_cmd
             .args(["-m", "venv", ".venv-engine"])
-            .current_dir(&root)
+            .current_dir(&root);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            venv_cmd.creation_flags(0x08000000);
+        }
+        let out = venv_cmd
             .output()
             .map_err(|e| format!("python not found: {e}"))?;
 
@@ -343,6 +360,11 @@ fn run_pip(
         cmd.arg(a);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
 
