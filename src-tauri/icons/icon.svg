@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1060"/>
+      <stop offset="100%" stop-color="#0a4f6e"/>
+    </linearGradient>
+    <linearGradient id="bars" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+
+  <!-- Speech bubble body -->
+  <path d="
+    M 88 100
+    Q 88 64 124 64
+    L 388 64
+    Q 424 64 424 100
+    L 424 296
+    Q 424 332 388 332
+    L 216 332
+    L 148 420
+    L 172 332
+    L 124 332
+    Q 88 332 88 296
+    Z
+  " fill="white" opacity="0.08"/>
+
+  <!-- Waveform bars — 5 bars, symmetric, rounded caps -->
+  <rect x="136" y="206" width="36" height="100" rx="18" fill="url(#bars)"/>
+  <rect x="192" y="158" width="36" height="148" rx="18" fill="url(#bars)"/>
+  <rect x="248" y="116" width="36" height="190" rx="18" fill="url(#bars)"/>
+  <rect x="304" y="158" width="36" height="148" rx="18" fill="url(#bars)"/>
+  <rect x="360" y="206" width="36" height="100" rx="18" fill="url(#bars)"/>
+
+</svg>
