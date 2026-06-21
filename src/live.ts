@@ -21,7 +21,7 @@ let isCapturingShortcut = false;
 
 // ── Overlay helper ────────────────────────────────────────────────────────────
 
-function overlay(): WebviewWindow | null {
+async function overlay(): Promise<WebviewWindow | null> {
   return WebviewWindow.getByLabel("overlay");
 }
 
@@ -168,12 +168,12 @@ toggle.addEventListener("click", async () => {
       });
       listening = true;
       setToggle(true);
-      void overlay()?.show();
+      void (await overlay())?.show();
     } else {
       await invoke("stop_live_translation");
       listening = false;
       setToggle(false);
-      void overlay()?.hide();
+      void (await overlay())?.hide();
     }
   } catch (err) {
     statusEl.textContent = `Error: ${err}`;
