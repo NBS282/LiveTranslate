@@ -6,6 +6,23 @@ mod translation;
 use state::{AppState, AudioCommand};
 use tauri::{Emitter, Manager};
 
+/// Recursively copies `src` into `dst`, creating dirs as needed.
+/// Used in production to copy bundled Python source from resources to app data.
+#[cfg(not(debug_assertions))]
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn get_output_devices() -> Vec<String> {
     audio::devices::list_output_devices()
@@ -187,6 +204,25 @@ pub fn run() {
             use tauri::Manager;
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+            // Production: resolve writable data dir and copy bundled Python source.
+            #[cfg(not(debug_assertions))]
+            {
+                if let Ok(data_dir) = app.path().app_local_data_dir() {
+                    let _ = std::fs::create_dir_all(&data_dir);
+                    std::env::set_var("LT_ENGINE_ROOT", data_dir.to_string_lossy().as_ref());
+
+                    // Copy lt_engine source from installer resources → data dir so the
+                    // Python server can find it. Runs on every launch to pick up updates.
+                    if let Ok(resource_dir) = app.path().resource_dir() {
+                        let src = resource_dir.join("python");
+                        let dst = data_dir.join("python");
+                        if src.exists() {
+                            let _ = copy_dir_all(&src, &dst);
+                        }
+                    }
+                }
+            }
 
             let state = app.state::<AppState>();
             // Kill any leftover server from a previous run, then spawn fresh.

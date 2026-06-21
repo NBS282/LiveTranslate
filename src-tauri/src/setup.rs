@@ -17,7 +17,26 @@ pub struct SetupProgress {
     pub detail: String,
 }
 
+// ── Path helpers ──────────────────────────────────────────────────────────────
+
+/// Root of the python-build-standalone extraction: <LT_ENGINE_ROOT>/engine/python/
+fn engine_dir() -> PathBuf {
+    crate::translation::sidecar::repo_root()
+        .join("engine")
+        .join("python")
+}
+
+/// The renamed Python interpreter shown in Task Manager as "livetranslate-engine".
+fn engine_exe() -> PathBuf {
+    engine_dir().join("livetranslate-engine.exe")
+}
+
+/// Active Python interpreter: portable runtime (production) or venv (dev).
 fn venv_python() -> PathBuf {
+    let prod = engine_exe();
+    if prod.exists() {
+        return prod;
+    }
     let rel = if cfg!(windows) {
         ".venv-engine/Scripts/python.exe"
     } else {
@@ -26,23 +45,35 @@ fn venv_python() -> PathBuf {
     crate::translation::sidecar::repo_root().join(rel)
 }
 
+/// Voice model lives in <LT_ENGINE_ROOT>/models/ so it survives app updates.
 pub fn piper_voice_path() -> PathBuf {
     if let Ok(p) = std::env::var("PIPER_VOICE") {
         return PathBuf::from(p);
     }
-    crate::translation::sidecar::repo_root().join("en_US-lessac-medium.onnx")
+    let models_dir = crate::translation::sidecar::repo_root().join("models");
+    let _ = std::fs::create_dir_all(&models_dir);
+    models_dir.join("en_US-lessac-medium.onnx")
 }
+
+/// True when running as a packaged/installed app (LT_ENGINE_ROOT is set by lib.rs).
+fn is_production() -> bool {
+    std::env::var("LT_ENGINE_ROOT").is_ok()
+}
+
+// ── Status check ─────────────────────────────────────────────────────────────
 
 pub fn check() -> SetupStatus {
     let venv_ok = venv_python().exists();
-    let piper_voice_ok =
-        piper_voice_path().exists() && piper_voice_path().with_extension("onnx.json").exists();
+    let voice = piper_voice_path();
+    let piper_voice_ok = voice.exists() && voice.with_extension("onnx.json").exists();
     SetupStatus {
         venv_ok,
         piper_voice_ok,
         ready: venv_ok && piper_voice_ok,
     }
 }
+
+// ── Progress events ───────────────────────────────────────────────────────────
 
 fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {
     let _ = app.emit(
@@ -55,14 +86,15 @@ fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {
     );
 }
 
-/// Downloads a file from `url` to `dest`, emitting progress events.
+// ── File download ─────────────────────────────────────────────────────────────
+
 fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Result<(), String> {
     use std::io::Write;
 
     emit_progress(app, step, 0, &format!("Downloading {url}"));
 
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -78,7 +110,7 @@ fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Resu
     let total = resp.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
     let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 8192];
+    let mut buf = [0u8; 65536];
 
     loop {
         use std::io::Read;
@@ -106,7 +138,73 @@ fn mb(bytes: u64) -> f64 {
     bytes as f64 / 1_048_576.0
 }
 
-/// Downloads the Piper voice model and its config to the repo root.
+// ── Portable Python (production only) ────────────────────────────────────────
+
+/// Downloads python-build-standalone, extracts it, and creates livetranslate-engine.exe.
+/// Uses Windows' built-in tar.exe (available since Windows 10 v1803).
+fn download_portable_python(app: &AppHandle) -> Result<(), String> {
+    const URL: &str = concat!(
+        "https://github.com/astral-sh/python-build-standalone/releases/download/",
+        "20250409/cpython-3.11.12+20250409-x86_64-pc-windows-msvc-install_only.tar.gz"
+    );
+
+    let root = crate::translation::sidecar::repo_root();
+    let engine_root = root.join("engine");
+    std::fs::create_dir_all(&engine_root).map_err(|e| e.to_string())?;
+
+    let archive = engine_root.join("python-portable.tar.gz");
+
+    // Download (~30 MB).
+    download_file(app, URL, &archive, "Downloading Python runtime")?;
+
+    // Extract with Windows built-in tar (Win 10 v1803+).
+    emit_progress(app, "Extracting Python runtime", 5, "");
+    let out = std::process::Command::new("tar")
+        .args([
+            "-xzf",
+            &archive.to_string_lossy(),
+            "-C",
+            &engine_root.to_string_lossy(),
+        ])
+        .output()
+        .map_err(|e| format!("tar not found (requires Windows 10 v1803+): {e}"))?;
+
+    if !out.status.success() {
+        return Err(format!(
+            "tar extraction failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // Clean up archive to save ~30 MB.
+    let _ = std::fs::remove_file(&archive);
+
+    // Copy python.exe → livetranslate-engine.exe so Task Manager shows the app name.
+    let python_exe = engine_dir().join("python.exe");
+    let lt_exe = engine_exe();
+    if python_exe.exists() && !lt_exe.exists() {
+        std::fs::copy(&python_exe, &lt_exe)
+            .map_err(|e| format!("failed to create livetranslate-engine.exe: {e}"))?;
+    }
+
+    // Bootstrap pip (not included in install_only variant).
+    emit_progress(app, "Bootstrapping pip", 8, "");
+    let bootstrap = std::process::Command::new(&lt_exe)
+        .args(["-m", "ensurepip", "--upgrade"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !bootstrap.status.success() {
+        return Err(format!(
+            "ensurepip failed: {}",
+            String::from_utf8_lossy(&bootstrap.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+// ── Piper voice download ──────────────────────────────────────────────────────
+
 pub fn download_piper_voice(app: &AppHandle) -> Result<(), String> {
     let base = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium";
     let onnx = piper_voice_path();
@@ -131,8 +229,8 @@ pub fn download_piper_voice(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs the full setup: venv creation + pip install + piper voice download.
-/// Emits `setup-progress` and `setup-done` events on `app`.
+// ── Main setup entry point ────────────────────────────────────────────────────
+
 pub fn run_setup(app: AppHandle) {
     std::thread::spawn(move || {
         if let Err(e) = run_setup_inner(&app) {
@@ -147,13 +245,18 @@ pub fn run_setup(app: AppHandle) {
 }
 
 fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
-    let root = crate::translation::sidecar::repo_root();
-    let venv_python = venv_python();
+    let python = venv_python();
 
-    // Step 1 — create venv
-    if !venv_python.exists() {
+    // ── Step 0 (production): portable Python runtime ──────────────────────────
+    if is_production() && !engine_exe().exists() {
+        emit_progress(app, "Downloading Python runtime", 3, "~30 MB…");
+        download_portable_python(app)?;
+    }
+
+    // ── Step 1 (dev only): create venv ───────────────────────────────────────
+    if !python.exists() && !is_production() {
         emit_progress(app, "Creating Python environment", 5, "");
-
+        let root = crate::translation::sidecar::repo_root();
         let out = std::process::Command::new("python")
             .args(["-m", "venv", ".venv-engine"])
             .current_dir(&root)
@@ -168,7 +271,9 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         }
     }
 
-    // Step 2 — pip install torch (CPU)
+    let python = venv_python();
+
+    // ── Step 2: install PyTorch (CPU) ─────────────────────────────────────────
     emit_progress(
         app,
         "Installing PyTorch (CPU)",
@@ -177,7 +282,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     );
     run_pip(
         app,
-        &venv_python,
+        &python,
         &[
             "install",
             "torch",
@@ -188,7 +293,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         50,
     )?;
 
-    // Step 3 — pip install remaining packages
+    // ── Step 3: install remaining engine packages ─────────────────────────────
     emit_progress(
         app,
         "Installing engine packages",
@@ -197,7 +302,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     );
     run_pip(
         app,
-        &venv_python,
+        &python,
         &[
             "install",
             "nemo_toolkit[asr]",
@@ -212,7 +317,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         85,
     )?;
 
-    // Step 4 — download piper voice
+    // ── Step 4: download Piper voice model ────────────────────────────────────
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
@@ -220,7 +325,8 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs a pip subcommand, streaming output as progress detail events.
+// ── pip runner ────────────────────────────────────────────────────────────────
+
 fn run_pip(
     app: &AppHandle,
     python: &PathBuf,
@@ -240,7 +346,6 @@ fn run_pip(
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
 
-    // Relay stderr lines as progress detail.
     if let Some(stderr) = child.stderr.take() {
         let app2 = app.clone();
         let step = args.first().copied().unwrap_or("pip").to_string();
@@ -254,7 +359,6 @@ fn run_pip(
         });
     }
 
-    // Drain stdout silently.
     if let Some(stdout) = child.stdout.take() {
         std::thread::spawn(move || {
             std::io::BufReader::new(stdout).lines().for_each(|_| {});

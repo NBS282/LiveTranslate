@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "livetranslate",
+  "productName": "LiveTranslate",
   "version": "0.1.0",
   "identifier": "com.livetranslate.app",
   "build": {
@@ -49,6 +49,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../python": "python"
+    }
   }
 }

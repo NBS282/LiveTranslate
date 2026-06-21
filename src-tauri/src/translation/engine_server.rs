@@ -11,10 +11,7 @@ pub fn kill_process_on_port() {
     #[cfg(target_os = "windows")]
     {
         // netstat → find PID → taskkill
-        if let Ok(out) = Command::new("netstat")
-            .args(["-ano"])
-            .output()
-        {
+        if let Ok(out) = Command::new("netstat").args(["-ano"]).output() {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
                 if line.contains(&format!(":{port} ")) && line.contains("LISTENING") {
@@ -34,7 +31,10 @@ pub fn kill_process_on_port() {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = Command::new("sh")
-            .args(["-c", &format!("lsof -ti:{port} | xargs kill -9 2>/dev/null")])
+            .args([
+                "-c",
+                &format!("lsof -ti:{port} | xargs kill -9 2>/dev/null"),
+            ])
             .output();
         std::thread::sleep(Duration::from_millis(300));
     }
@@ -93,6 +93,12 @@ pub fn spawn_server() -> Result<Child, String> {
     let mut child = Command::new(&program)
         .args(["-m", "lt_engine.server"])
         .current_dir(cwd)
+        // Tell the Python server where the Piper voice model lives.
+        // pipeline.py also checks this env var before falling back to its own path logic.
+        .env(
+            "PIPER_VOICE",
+            crate::setup::piper_voice_path().to_string_lossy().as_ref(),
+        )
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn translation server '{program}': {e}"))?;

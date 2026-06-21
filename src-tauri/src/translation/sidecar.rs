@@ -44,11 +44,29 @@ pub fn repo_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Python interpreter of the engine venv. Override with LT_ENGINE_PYTHON.
+/// Python interpreter used by the engine. Override with LT_ENGINE_PYTHON.
+///
+/// Resolution order:
+///   1. LT_ENGINE_PYTHON env var (manual override)
+///   2. engine/python/livetranslate-engine.exe  (production portable runtime)
+///   3. .venv-engine/Scripts/python.exe          (dev venv fallback)
 pub fn engine_python() -> String {
     if let Ok(p) = std::env::var("LT_ENGINE_PYTHON") {
         return p;
     }
+    // Production: portable Python-build-standalone, copied as a named exe.
+    let prod_exe = repo_root()
+        .join("engine")
+        .join("python")
+        .join(if cfg!(windows) {
+            "livetranslate-engine.exe"
+        } else {
+            "python3"
+        });
+    if prod_exe.exists() {
+        return prod_exe.to_string_lossy().into_owned();
+    }
+    // Dev fallback: venv created by setup.
     let rel = if cfg!(windows) {
         ".venv-engine/Scripts/python.exe"
     } else {
