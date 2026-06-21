@@ -9,6 +9,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::translation::segmenter::{Segmenter, FRAME_SAMPLES_16K};
 
+/// Volume of the mic passthrough relative to full scale (0.0 – 1.0).
+/// Low enough to be a "comfort signal" without drowning out the caller.
+const PASSTHROUGH_GAIN: f32 = 0.20;
+
 #[derive(Clone, Serialize)]
 pub struct PhraseEvent {
     pub source_text: String,
@@ -63,13 +67,21 @@ fn drain_to_latest(rx: &Receiver<Vec<i16>>, first: Vec<i16>) -> (Vec<i16>, usize
 /// Playback thread: plays each translated WAV to `output_device` serially, then
 /// deletes the file and its temp dir. Kept separate from the worker so playback
 /// (which runs at ~real time) never blocks translation of the next segment.
-fn run_playback(rx: Receiver<PathBuf>, stop: Arc<AtomicBool>, output_device: String) {
+/// Sets `is_playing` while audio is rendering so the passthrough thread stays silent.
+fn run_playback(
+    rx: Receiver<PathBuf>,
+    stop: Arc<AtomicBool>,
+    output_device: String,
+    is_playing: Arc<AtomicBool>,
+) {
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(wav) => {
+                is_playing.store(true, Ordering::Relaxed);
                 if let Err(e) = play_wav_to_device(&wav, &output_device) {
                     eprintln!("playback error: {e}");
                 }
+                is_playing.store(false, Ordering::Relaxed);
                 let _ = std::fs::remove_file(&wav);
                 if let Some(dir) = wav.parent() {
                     let _ = std::fs::remove_dir(dir);
@@ -79,6 +91,112 @@ fn run_playback(rx: Receiver<PathBuf>, stop: Arc<AtomicBool>, output_device: Str
             Err(_) => break,
         }
     }
+}
+
+/// Passthrough thread: forwards raw 16 kHz mic frames to the output device at a reduced
+/// gain so callers hear "someone is speaking" during the translation processing gap.
+/// Silences itself (and flushes its buffer) while the playback thread is rendering a
+/// translated WAV, so the two audio streams never overlap.
+fn run_passthrough(
+    rx: Receiver<Vec<i16>>,
+    stop: Arc<AtomicBool>,
+    is_playing: Arc<AtomicBool>,
+    output_device_name: String,
+) {
+    use std::collections::VecDeque;
+
+    let host = cpal::default_host();
+    let device = if output_device_name.is_empty() {
+        host.default_output_device()
+    } else {
+        host.output_devices()
+            .ok()
+            .and_then(|mut it| {
+                it.find(|d| d.name().map(|n| n == output_device_name).unwrap_or(false))
+            })
+            .or_else(|| host.default_output_device())
+    };
+
+    let device = match device {
+        Some(d) => d,
+        None => {
+            eprintln!("passthrough: no output device found");
+            return;
+        }
+    };
+
+    let native_cfg = match device.default_output_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("passthrough: config error: {e}");
+            return;
+        }
+    };
+
+    let native_rate = native_cfg.sample_rate().0 as usize;
+    let native_ch = native_cfg.channels() as usize;
+    // Cap at ~500 ms of buffered samples to prevent drift accumulation.
+    let max_buf = native_rate * native_ch / 2;
+
+    let buf: Arc<std::sync::Mutex<VecDeque<f32>>> =
+        Arc::new(std::sync::Mutex::new(VecDeque::new()));
+    let buf_cb = buf.clone();
+
+    let stream_cfg = cpal::StreamConfig {
+        channels: native_ch as u16,
+        sample_rate: cpal::SampleRate(native_rate as u32),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
+    let stream = match device.build_output_stream(
+        &stream_cfg,
+        move |data: &mut [f32], _| {
+            let mut b = buf_cb.lock().unwrap();
+            for d in data.iter_mut() {
+                *d = b.pop_front().unwrap_or(0.0);
+            }
+        },
+        |e| eprintln!("passthrough stream error: {e}"),
+        None,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("passthrough: stream build error: {e}");
+            return;
+        }
+    };
+
+    if let Err(e) = stream.play() {
+        eprintln!("passthrough: stream play error: {e}");
+        return;
+    }
+
+    let mut resampler = SimpleResampler::new(16_000, native_rate);
+
+    while !stop.load(Ordering::Relaxed) {
+        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(samples) => {
+                if is_playing.load(Ordering::Relaxed) {
+                    // Flush so stale mic audio doesn't bleed into the translated playback.
+                    buf.lock().unwrap().clear();
+                } else {
+                    let f32_in: Vec<f32> = samples
+                        .iter()
+                        .map(|&s| s as f32 / i16::MAX as f32 * PASSTHROUGH_GAIN)
+                        .collect();
+                    let resampled = resampler.process(&f32_in);
+                    let final_samples = convert_channels(&resampled, 1, native_ch);
+                    let mut b = buf.lock().unwrap();
+                    if b.len() + final_samples.len() <= max_buf {
+                        b.extend(final_samples);
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        }
+    }
+    // `stream` drops here, stopping cpal output automatically.
 }
 
 /// Worker thread: consumes segments from `rx`, translates each, emits a "phrase" event,
@@ -168,13 +286,28 @@ pub fn start(
 
     let (seg_tx, seg_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
     let (play_tx, play_rx): (Sender<PathBuf>, Receiver<PathBuf>) = std::sync::mpsc::channel();
+    let (pass_tx, pass_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
+    let is_playing = Arc::new(AtomicBool::new(false));
+
+    // Passthrough thread: forwards mic audio at low gain during processing gaps.
+    {
+        let stop_clone = stop.clone();
+        let is_playing_clone = is_playing.clone();
+        let output_device = output_device_name.to_string();
+        std::thread::spawn(move || {
+            run_passthrough(pass_rx, stop_clone, is_playing_clone, output_device)
+        });
+    }
 
     // Playback thread: plays translated audio serially, decoupled from translation.
     {
         let stop_clone = stop.clone();
         let output_device = output_device_name.to_string();
-        std::thread::spawn(move || run_playback(play_rx, stop_clone, output_device));
+        let is_playing_clone = is_playing.clone();
+        std::thread::spawn(move || {
+            run_playback(play_rx, stop_clone, output_device, is_playing_clone)
+        });
     }
 
     // Worker thread: translate segments, emit events, enqueue audio for playback.
@@ -187,7 +320,7 @@ pub fn start(
     // Producer thread: capture → resample → VAD → segment → send.
     let stop_prod = stop.clone();
     std::thread::spawn(move || {
-        if let Err(e) = run_producer(device, in_rate, channels, seg_tx, stop_prod) {
+        if let Err(e) = run_producer(device, in_rate, channels, seg_tx, pass_tx, stop_prod) {
             eprintln!("live producer error: {e}");
         }
     });
@@ -197,11 +330,13 @@ pub fn start(
 
 /// Producer: opens a cpal input stream, downmixes to mono, resamples to 16 kHz,
 /// feeds 30 ms frames into webrtc-vad, and pushes closed segments onto `seg_tx`.
+/// Every frame is also forwarded to `pass_tx` for the comfort-passthrough thread.
 fn run_producer(
     device: cpal::Device,
     in_rate: usize,
     channels: usize,
     seg_tx: Sender<Vec<i16>>,
+    pass_tx: Sender<Vec<i16>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     use webrtc_vad::{SampleRate, Vad, VadMode};
@@ -256,6 +391,7 @@ fn run_producer(
                         if let Some(seg) = segmenter.push(&frame_acc, voiced) {
                             let _ = seg_tx.send(seg);
                         }
+                        let _ = pass_tx.send(frame_acc.clone());
                         frame_acc.clear();
                     }
                 }
