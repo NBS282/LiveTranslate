@@ -504,6 +504,151 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
     Ok(())
 }
 
+/// Starts PTT capture: same thread layout as `start()` but uses `run_producer_ptt`
+/// instead of the VAD-based producer. Recording is gated by `ptt_recording`.
+pub fn start_ptt(
+    device_name: &str,
+    output_device_name: &str,
+    app: AppHandle,
+    ptt_recording: Arc<AtomicBool>,
+) -> Result<LiveSession, String> {
+    let host = cpal::default_host();
+    let device = host
+        .input_devices()
+        .map_err(|e| e.to_string())?
+        .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+        .or_else(|| host.default_input_device())
+        .ok_or_else(|| "no input device available".to_string())?;
+
+    let default_config = device.default_input_config().map_err(|e| e.to_string())?;
+    let in_rate = default_config.sample_rate().0 as usize;
+    let channels = default_config.channels() as usize;
+
+    let (seg_tx, seg_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
+    let (play_tx, play_rx): (Sender<PathBuf>, Receiver<PathBuf>) = std::sync::mpsc::channel();
+    let (pass_tx, pass_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let is_playing = Arc::new(AtomicBool::new(false));
+
+    {
+        let stop_clone = stop.clone();
+        let is_playing_clone = is_playing.clone();
+        let output_device = output_device_name.to_string();
+        std::thread::spawn(move || {
+            run_passthrough(pass_rx, stop_clone, is_playing_clone, output_device)
+        });
+    }
+    {
+        let stop_clone = stop.clone();
+        let output_device = output_device_name.to_string();
+        let is_playing_clone = is_playing.clone();
+        std::thread::spawn(move || {
+            run_playback(play_rx, stop_clone, output_device, is_playing_clone)
+        });
+    }
+    {
+        let app_clone = app.clone();
+        let stop_clone = stop.clone();
+        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, play_tx));
+    }
+
+    let stop_prod = stop.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = run_producer_ptt(
+            device,
+            in_rate,
+            channels,
+            seg_tx,
+            pass_tx,
+            stop_prod,
+            ptt_recording,
+        ) {
+            eprintln!("ptt producer error: {e}");
+        }
+    });
+
+    Ok(LiveSession { stop })
+}
+
+/// PTT producer: captures audio continuously but only accumulates samples while
+/// `ptt_recording` is true. On the falling edge (true→false) it sends the entire
+/// buffered recording to the worker as a single segment.
+fn run_producer_ptt(
+    device: cpal::Device,
+    in_rate: usize,
+    channels: usize,
+    seg_tx: Sender<Vec<i16>>,
+    pass_tx: Sender<Vec<i16>>,
+    stop: Arc<AtomicBool>,
+    ptt_recording: Arc<AtomicBool>,
+) -> Result<(), String> {
+    let (samp_tx, samp_rx) = std::sync::mpsc::channel::<Vec<f32>>();
+
+    let config: cpal::StreamConfig = device
+        .default_input_config()
+        .map_err(|e| e.to_string())?
+        .into();
+
+    let stream = device
+        .build_input_stream(
+            &config,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let ch = channels.max(1);
+                let mut mono = Vec::with_capacity(data.len() / ch);
+                for chunk in data.chunks(ch) {
+                    let avg = chunk.iter().sum::<f32>() / chunk.len() as f32;
+                    mono.push(avg);
+                }
+                let _ = samp_tx.send(mono);
+            },
+            |e| eprintln!("cpal input stream error: {e}"),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+    stream.play().map_err(|e| e.to_string())?;
+
+    let mut resampler = SimpleResampler::new(in_rate, 16_000);
+    let mut frame_acc: Vec<i16> = Vec::with_capacity(FRAME_SAMPLES_16K);
+    let mut ptt_buffer: Vec<i16> = Vec::new();
+    let mut was_recording = false;
+
+    while !stop.load(Ordering::Relaxed) {
+        match samp_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(mono) => {
+                for s in resampler.process(&mono) {
+                    let sample = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+                    frame_acc.push(sample);
+
+                    if frame_acc.len() == FRAME_SAMPLES_16K {
+                        let now_recording = ptt_recording.load(Ordering::Relaxed);
+
+                        if now_recording {
+                            ptt_buffer.extend_from_slice(&frame_acc);
+                            let _ = pass_tx.send(frame_acc.clone());
+                        }
+
+                        // Falling edge: recording just stopped — flush the buffer.
+                        if was_recording && !now_recording && ptt_buffer.len() >= 8_000 {
+                            let seg = std::mem::take(&mut ptt_buffer);
+                            let _ = seg_tx.send(seg);
+                        } else if was_recording && !now_recording {
+                            ptt_buffer.clear();
+                        }
+
+                        was_recording = now_recording;
+                        frame_acc.clear();
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+
 /// Minimal linear interpolation resampler adequate for 16 kHz VAD/STT input.
 /// rubato (declared in Cargo.toml) is available for a higher-quality replacement.
 struct SimpleResampler {

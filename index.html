@@ -139,6 +139,30 @@
           <select id="live-output-device" class="select"></select>
         </div>
 
+        <div class="field">
+          <label class="field-label">Translation mode</label>
+          <div class="mode-selector" id="mode-selector">
+            <button class="mode-btn active" data-mode="vad">Auto (VAD)</button>
+            <button class="mode-btn" data-mode="ptt">Push-to-talk</button>
+          </div>
+        </div>
+
+        <div id="ptt-config" class="ptt-config hidden">
+          <div class="field">
+            <label class="field-label">Shortcut</label>
+            <div class="shortcut-row">
+              <span id="ptt-shortcut-display" class="shortcut-badge">Not set</span>
+              <button id="btn-capture-shortcut" class="btn-secondary">Set shortcut</button>
+            </div>
+            <p class="ptt-hint muted">Press the combo to toggle recording on/off</p>
+          </div>
+        </div>
+
+        <div id="ptt-recording-indicator" class="ptt-rec-indicator hidden">
+          <span class="rec-dot"></span>
+          <span>Recording…</span>
+        </div>
+
         <button id="live-toggle" class="btn-toggle">
           <span class="toggle-icon">▶</span>
           <span class="toggle-label">Start</span>

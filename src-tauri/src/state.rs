@@ -1,8 +1,9 @@
 use crate::audio::passthrough::{self, Passthrough};
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Commands sent to the dedicated audio thread.
 pub enum AudioCommand {
@@ -26,6 +27,10 @@ pub struct AppState {
     pub live: Mutex<Option<crate::translation::live::LiveSession>>,
     /// Temp dir created by the last offline translate_file call. Cleaned up before the next one.
     pub last_translation_out: Mutex<Option<PathBuf>>,
+    /// Shared flag toggled by the global PTT shortcut; the PTT producer reads this.
+    pub ptt_recording: Arc<AtomicBool>,
+    /// The shortcut string currently registered for PTT (e.g. "ctrl+shift+space").
+    pub ptt_shortcut: Mutex<Option<String>>,
 }
 
 impl Default for AppState {
@@ -67,6 +72,8 @@ impl AppState {
             server: Mutex::new(None),
             live: Mutex::new(None),
             last_translation_out: Mutex::new(None),
+            ptt_recording: Arc::new(AtomicBool::new(false)),
+            ptt_shortcut: Mutex::new(None),
         }
     }
 

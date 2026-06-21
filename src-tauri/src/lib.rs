@@ -4,6 +4,7 @@ mod state;
 mod translation;
 
 use state::{AppState, AudioCommand};
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn get_output_devices() -> Vec<String> {
@@ -124,14 +125,69 @@ fn download_piper_voice(app: tauri::AppHandle) -> Result<(), String> {
     setup::download_piper_voice(&app)
 }
 
+#[tauri::command]
+fn start_live_translation_ptt(
+    device_name: String,
+    output_device_name: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    if !translation::engine_server::is_server_up() {
+        let waited = std::time::Instant::now();
+        translation::engine_server::wait_until_ready(std::time::Duration::from_secs(120))
+            .map_err(|e| format!("translation server not ready after ~{}s: {e}", waited.elapsed().as_secs()))?;
+    }
+    // Reset flag so we never start mid-recording state.
+    state.ptt_recording.store(false, std::sync::atomic::Ordering::SeqCst);
+    let ptt_rec = state.ptt_recording.clone();
+    let session = translation::live::start_ptt(&device_name, &output_device_name, app, ptt_rec)?;
+    *state.live.lock().map_err(|e| e.to_string())? = Some(session);
+    Ok(())
+}
+
+#[tauri::command]
+fn register_ptt_shortcut(
+    shortcut_str: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    // Unregister previous PTT shortcut if any.
+    if let Ok(guard) = state.ptt_shortcut.lock() {
+        if let Some(ref prev) = *guard {
+            app.global_shortcut().unregister(prev.as_str()).ok();
+        }
+    }
+
+    app.global_shortcut()
+        .register(shortcut_str.as_str())
+        .map_err(|e| e.to_string())?;
+
+    *state.ptt_shortcut.lock().map_err(|e| e.to_string())? = Some(shortcut_str);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, _event| {
+                    let s = app.state::<AppState>();
+                    let was = s.ptt_recording.fetch_xor(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = app.emit("ptt-state", !was);
+                })
+                .build(),
+        )
         .manage(AppState::default())
         .setup(|app| {
             use tauri::Manager;
+            use tauri::menu::{Menu, MenuItem};
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
             let state = app.state::<AppState>();
             // Kill any leftover server from a previous run, then spawn fresh.
             match translation::engine_server::spawn_server() {
@@ -145,6 +201,52 @@ pub fn run() {
                     eprintln!("translation server not ready: {e}");
                 }
             });
+
+            // ── System tray ────────────────────────────────────────────────
+            let show_i = MenuItem::with_id(app, "show", "Open LiveTranslate", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu   = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("LiveTranslate")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+
+            // ── Hide to tray on close (instead of quitting) ────────────────
+            let main_win  = app.get_webview_window("main").unwrap();
+            let win_clone = main_win.clone();
+            main_win.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = win_clone.hide();
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -154,6 +256,8 @@ pub fn run() {
             translate_file,
             start_live_translation,
             stop_live_translation,
+            start_live_translation_ptt,
+            register_ptt_shortcut,
             check_setup,
             start_setup,
             check_vbcable,

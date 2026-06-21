@@ -268,6 +268,34 @@ button {
 .status-badge.err .badge-dot  { background: var(--red); }
 .status-badge.err .badge-text { color: var(--text); }
 
+/* ── Card entry animation ── */
+@keyframes card-appear {
+  from { opacity: 0; transform: translateY(22px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.card { animation: card-appear 0.42s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Glassmorphism on onboarding card */
+#screen-onboarding .card {
+  background: rgba(19, 19, 31, 0.88);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  border-color: rgba(124, 58, 237, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.05) inset,
+    0 24px 64px rgba(0,0,0,0.55),
+    0 0 48px rgba(124, 58, 237, 0.07);
+}
+
+/* Onboarding step slide-in */
+@keyframes step-enter {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.ob-step:not(.hidden) {
+  animation: step-enter 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 /* ── Onboarding step ── */
 .ob-step { display: flex; flex-direction: column; gap: 1rem; }
 
@@ -413,4 +441,97 @@ button {
 #phrases li.error {
   border-left-color: var(--red);
   color: var(--red);
+}
+
+/* ── Mode selector ── */
+.mode-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  transition: all 0.18s;
+  cursor: pointer;
+}
+.mode-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.mode-btn:hover:not(.active):not(:disabled) { color: var(--text); }
+.mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── PTT config ── */
+.ptt-config { display: flex; flex-direction: column; gap: 0.5rem; }
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.shortcut-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.78rem;
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  color: var(--cyan);
+  letter-spacing: 0.02em;
+  min-width: 96px;
+}
+.shortcut-badge.capturing {
+  border-color: var(--violet);
+  color: var(--violet);
+  animation: pulse-border 0.7s ease-in-out infinite alternate;
+}
+@keyframes pulse-border {
+  from { border-color: var(--violet); }
+  to   { border-color: var(--cyan); }
+}
+
+.ptt-hint { font-size: 0.72rem; }
+
+/* ── PTT recording indicator ── */
+.ptt-rec-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--red) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: var(--red);
+  font-weight: 500;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  flex-shrink: 0;
+  animation: rec-pulse 1s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.55; transform: scale(0.75); }
 }
