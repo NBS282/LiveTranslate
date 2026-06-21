@@ -8,90 +8,148 @@
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
-    <!-- ── SETUP SCREEN ───────────────────────────────────────────── -->
+
+    <!-- ── SETUP ─────────────────────────────────────────────────────── -->
     <div id="screen-setup" class="screen hidden">
-      <h1>LiveTranslate — First-time Setup</h1>
-      <p>The translation engine needs to be installed before the app can run.<br />
-         This takes <strong>10–20 minutes</strong> and requires an internet connection.</p>
+      <div class="card">
+        <div class="logo-mark">LT</div>
+        <h1>LiveTranslate</h1>
+        <p class="muted">One-time engine setup — takes 10–20 min</p>
 
-      <div id="setup-status-box">
-        <p id="setup-check-venv">⬜ Python environment (.venv-engine)</p>
-        <p id="setup-check-piper">⬜ Piper voice model</p>
-      </div>
-
-      <button id="btn-run-setup">Install engine</button>
-
-      <div id="setup-progress-box" class="hidden">
-        <p id="setup-step">Preparing…</p>
-        <progress id="setup-bar" value="0" max="100"></progress>
-        <pre id="setup-log"></pre>
-      </div>
-    </div>
-
-    <!-- ── ONBOARDING SCREEN ─────────────────────────────────────── -->
-    <div id="screen-onboarding" class="screen hidden">
-      <h1>LiveTranslate — Setup</h1>
-
-      <!-- Step 1: VB-Cable -->
-      <div id="ob-step-1" class="ob-step">
-        <h2>Step 1 — Install VB-Audio Virtual Cable</h2>
-        <p>LiveTranslate routes translated audio through a virtual audio cable so apps like
-           Zoom or Discord hear it as a microphone.</p>
-        <p id="ob-cable-status">Checking…</p>
-        <a id="ob-cable-link" href="#" class="hidden btn-link">
-          Download VB-Cable (free) →
-        </a>
-        <button id="btn-ob-cable-check">Re-check</button>
-        <button id="btn-ob-next-1" class="hidden">Next →</button>
-      </div>
-
-      <!-- Step 2: Piper voice (download if missing) -->
-      <div id="ob-step-2" class="ob-step hidden">
-        <h2>Step 2 — Voice model</h2>
-        <p id="ob-piper-status">Checking voice model…</p>
-        <button id="btn-ob-dl-piper" class="hidden">Download voice model</button>
-        <div id="ob-piper-progress" class="hidden">
-          <progress id="ob-piper-bar" value="0" max="100"></progress>
-          <p id="ob-piper-detail"></p>
+        <div class="check-list">
+          <div class="check-item" id="setup-check-venv">
+            <span class="check-icon" data-state="idle"></span>
+            <span>Python environment (.venv-engine)</span>
+          </div>
+          <div class="check-item" id="setup-check-piper">
+            <span class="check-icon" data-state="idle"></span>
+            <span>Voice model (Piper)</span>
+          </div>
         </div>
-        <button id="btn-ob-next-2" class="hidden">Next →</button>
-      </div>
 
-      <!-- Step 3: Instructions -->
-      <div id="ob-step-3" class="ob-step hidden">
-        <h2>Step 3 — Configure your video call app</h2>
-        <p>In <strong>Zoom / Discord / Teams</strong> (whichever app you use):</p>
-        <ol>
-          <li>Open <strong>Audio Settings</strong>.</li>
-          <li>Set <strong>Microphone</strong> to <em>CABLE Output (VB-Audio Virtual Cable)</em>.</li>
-          <li>Speak Spanish — LiveTranslate will translate and send English audio through the cable.</li>
-        </ol>
-        <p>Your own microphone stays selected inside LiveTranslate.</p>
-        <button id="btn-ob-finish">Finish setup →</button>
+        <button id="btn-run-setup" class="btn-primary btn-full">Install engine</button>
+
+        <div id="setup-progress-box" class="progress-section hidden">
+          <div class="progress-header">
+            <span id="setup-step">Preparing…</span>
+            <span id="setup-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="setup-bar-fill" class="progress-fill" style="width:0%"></div>
+          </div>
+          <pre id="setup-log"></pre>
+        </div>
       </div>
     </div>
 
-    <!-- ── MAIN SCREEN ───────────────────────────────────────────── -->
+    <!-- ── ONBOARDING ────────────────────────────────────────────────── -->
+    <div id="screen-onboarding" class="screen hidden">
+      <div class="card">
+        <div class="step-dots">
+          <div class="step-dot active"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
+        </div>
+
+        <!-- Step 1 -->
+        <div id="ob-step-1" class="ob-step">
+          <div>
+            <h2>Virtual audio cable</h2>
+            <p class="muted">Routes translated audio so Zoom or Discord hears it as a microphone.</p>
+          </div>
+
+          <div id="ob-cable-status" class="status-badge">
+            <span class="badge-dot"></span>
+            <span class="badge-text">Checking…</span>
+          </div>
+
+          <div class="btn-row">
+            <button id="btn-ob-cable-check" class="btn-secondary">Re-check</button>
+            <button id="ob-cable-install" class="btn-link hidden">Download VB-Cable →</button>
+            <button id="btn-ob-next-1" class="btn-primary hidden">Continue →</button>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div id="ob-step-2" class="ob-step hidden">
+          <div>
+            <h2>Voice model</h2>
+            <p class="muted">Converts translated text to speech (~60 MB).</p>
+          </div>
+
+          <div id="ob-piper-status" class="status-badge">
+            <span class="badge-dot"></span>
+            <span class="badge-text">Checking…</span>
+          </div>
+
+          <div id="ob-piper-progress" class="progress-section hidden">
+            <div class="progress-header">
+              <span id="ob-piper-step">Downloading…</span>
+              <span id="ob-piper-pct">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="ob-piper-fill" class="progress-fill" style="width:0%"></div>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button id="btn-ob-dl-piper" class="btn-primary hidden">Download voice model</button>
+            <button id="btn-ob-next-2" class="btn-primary hidden">Continue →</button>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div id="ob-step-3" class="ob-step hidden">
+          <div>
+            <h2>Configure your video call app</h2>
+            <p class="muted">In <strong>Zoom, Discord or Teams</strong>:</p>
+          </div>
+          <ol class="instructions">
+            <li>Open <strong>Audio Settings</strong></li>
+            <li>Set <strong>Microphone</strong> → <em>CABLE Output (VB-Audio Virtual Cable)</em></li>
+            <li>Speak Spanish — LiveTranslate sends English audio through the cable</li>
+          </ol>
+          <button id="btn-ob-finish" class="btn-primary btn-full">Start using LiveTranslate →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MAIN ──────────────────────────────────────────────────────── -->
     <div id="screen-main" class="screen hidden">
-      <h1>LiveTranslate</h1>
+      <div class="card">
+        <div class="main-header">
+          <div class="app-name">
+            <span class="status-dot" id="status-dot"></span>
+            LiveTranslate
+          </div>
+          <button id="btn-reopen-onboarding" class="btn-icon" title="Setup">⚙</button>
+        </div>
 
-      <section>
-        <label for="live-device">Input mic:</label>
-        <select id="live-device">
-          <option value="">Default microphone</option>
-        </select>
+        <div class="field">
+          <label class="field-label" for="live-device">Microphone</label>
+          <select id="live-device" class="select">
+            <option value="">Default microphone</option>
+          </select>
+        </div>
 
-        <label for="live-output-device">Output (cable):</label>
-        <select id="live-output-device"></select>
+        <div class="field">
+          <label class="field-label" for="live-output-device">Output (VB-Cable)</label>
+          <select id="live-output-device" class="select"></select>
+        </div>
 
-        <button id="live-toggle">Start translation</button>
-        <p id="live-status">Idle</p>
-      </section>
+        <button id="live-toggle" class="btn-toggle">
+          <span class="toggle-icon">▶</span>
+          <span class="toggle-label">Start</span>
+        </button>
 
-      <ul id="phrases"></ul>
+        <p id="live-status" class="live-status-text">Idle</p>
 
-      <hr />
-      <button id="btn-reopen-onboarding">⚙ Setup</button>
+        <div class="phrases-header">Phrases</div>
+        <ul id="phrases"></ul>
+      </div>
     </div>
+
   </body>
 </html>
