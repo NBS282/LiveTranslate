@@ -1,4 +1,5 @@
 mod audio;
+mod setup;
 mod state;
 mod translation;
 
@@ -79,6 +80,13 @@ fn start_live_translation(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
+    // Wait for the engine server to be ready before starting capture.
+    // warmup() can take 10–30s (Parakeet + Opus-MT + Piper on CPU).
+    if !translation::engine_server::is_server_up() {
+        let waited = std::time::Instant::now();
+        translation::engine_server::wait_until_ready(std::time::Duration::from_secs(120))
+            .map_err(|e| format!("translation server not ready after ~{}s: {e}", waited.elapsed().as_secs()))?;
+    }
     let session = translation::live::start(&device_name, &output_device_name, app)?;
     *state.live.lock().map_err(|e| e.to_string())? = Some(session);
     Ok(())
@@ -94,6 +102,28 @@ fn stop_live_translation(state: tauri::State<AppState>) {
     }
 }
 
+#[tauri::command]
+fn check_setup() -> setup::SetupStatus {
+    setup::check()
+}
+
+#[tauri::command]
+fn start_setup(app: tauri::AppHandle) {
+    setup::run_setup(app);
+}
+
+#[tauri::command]
+fn check_vbcable() -> bool {
+    audio::devices::list_output_devices()
+        .iter()
+        .any(|d| d.name.to_lowercase().contains("cable"))
+}
+
+#[tauri::command]
+fn download_piper_voice(app: tauri::AppHandle) -> Result<(), String> {
+    setup::download_piper_voice(&app)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -103,13 +133,10 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let state = app.state::<AppState>();
-            if translation::engine_server::is_server_up() {
-                // Reuse an already-running server (e.g. left over from a previous dev run).
-            } else {
-                match translation::engine_server::spawn_server() {
-                    Ok(child) => { *state.server.lock().unwrap() = Some(child); }
-                    Err(e) => { eprintln!("could not spawn translation server: {e}"); }
-                }
+            // Kill any leftover server from a previous run, then spawn fresh.
+            match translation::engine_server::spawn_server() {
+                Ok(child) => { *state.server.lock().unwrap() = Some(child); }
+                Err(e) => { eprintln!("could not spawn translation server: {e}"); }
             }
             std::thread::spawn(|| {
                 if let Err(e) = translation::engine_server::wait_until_ready(
@@ -126,7 +153,11 @@ pub fn run() {
             stop_passthrough,
             translate_file,
             start_live_translation,
-            stop_live_translation
+            stop_live_translation,
+            check_setup,
+            start_setup,
+            check_vbcable,
+            download_piper_voice,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

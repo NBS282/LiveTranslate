@@ -95,6 +95,71 @@ button {
   margin-right: 5px;
 }
 
+/* ── Utilities ── */
+.hidden { display: none !important; }
+
+/* ── Screens ── */
+.screen {
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+/* ── Setup screen ── */
+#setup-progress-box {
+  margin-top: 1rem;
+}
+
+#setup-bar {
+  width: 100%;
+  height: 1.5rem;
+}
+
+#setup-log {
+  font-size: 0.8rem;
+  max-height: 200px;
+  overflow-y: auto;
+  background: #f0f0f0;
+  padding: 0.5rem;
+  border-radius: 4px;
+  white-space: pre-wrap;
+}
+
+/* ── Onboarding ── */
+.ob-step {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.btn-link {
+  display: inline-block;
+  margin: 0.5rem 0;
+  padding: 0.5rem 1rem;
+  background: #396cd8;
+  color: white;
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.btn-link:hover {
+  background: #535bf2;
+}
+
+/* ── Main screen ── */
+#phrases {
+  list-style: none;
+  padding: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#phrases li {
+  padding: 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f6f6f6;

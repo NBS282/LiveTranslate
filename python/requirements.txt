@@ -1,0 +1,11 @@
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0+cpu
+
+--index-url https://pypi.org/simple
+nemo_toolkit[asr]
+transformers
+sentencepiece
+piper-tts
+fastapi[standard]
+uvicorn[standard]
+soundfile

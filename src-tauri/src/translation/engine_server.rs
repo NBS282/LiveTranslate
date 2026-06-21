@@ -1,8 +1,44 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::translation::sidecar::TranslationOutput;
+
+/// Kills whatever process is listening on our port so a fresh server can be started.
+/// Uses platform-specific commands (taskkill on Windows, lsof+kill on Unix).
+pub fn kill_process_on_port() {
+    let port = port();
+    #[cfg(target_os = "windows")]
+    {
+        // netstat → find PID → taskkill
+        if let Ok(out) = Command::new("netstat")
+            .args(["-ano"])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                if line.contains(&format!(":{port} ")) && line.contains("LISTENING") {
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            let _ = Command::new("taskkill")
+                                .args(["/F", "/PID", &pid.to_string()])
+                                .output();
+                            // Give the process time to release the port.
+                            std::thread::sleep(Duration::from_millis(300));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = Command::new("sh")
+            .args(["-c", &format!("lsof -ti:{port} | xargs kill -9 2>/dev/null")])
+            .output();
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
 
 fn port() -> String {
     std::env::var("LT_ENGINE_PORT").unwrap_or_else(|_| "8765".to_string())
@@ -48,14 +84,32 @@ pub fn is_server_up() -> bool {
 }
 
 /// Spawns the FastAPI server as a child process.
+/// Kills any leftover process on the port first so we always start fresh.
+/// Stderr is piped and relayed to eprintln! so Python tracebacks appear in the dev console.
 pub fn spawn_server() -> Result<Child, String> {
+    kill_process_on_port();
     let program = crate::translation::sidecar::engine_python();
     let cwd = crate::translation::sidecar::python_dir();
-    Command::new(&program)
+    let mut child = Command::new(&program)
         .args(["-m", "lt_engine.server"])
         .current_dir(cwd)
+        .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to spawn translation server '{program}': {e}"))
+        .map_err(|e| format!("failed to spawn translation server '{program}': {e}"))?;
+
+    if let Some(stderr) = child.stderr.take() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                eprintln!("[lt_engine] {line}");
+            }
+        });
+    }
+
+    Ok(child)
 }
 
 /// Polls /health until ready or timeout.

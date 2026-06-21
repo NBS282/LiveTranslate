@@ -2,42 +2,96 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
+    <title>LiveTranslate</title>
+    <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.ts" defer></script>
   </head>
-
   <body>
-    <main>
-      <h1>LiveTranslate — Audio Passthrough</h1>
-      <label for="device">Virtual output device:</label>
-      <select id="device"></select>
-      <button id="toggle">Start</button>
-      <p id="status">Stopped</p>
-      <hr />
+    <!-- ── SETUP SCREEN ───────────────────────────────────────────── -->
+    <div id="screen-setup" class="screen hidden">
+      <h1>LiveTranslate — First-time Setup</h1>
+      <p>The translation engine needs to be installed before the app can run.<br />
+         This takes <strong>10–20 minutes</strong> and requires an internet connection.</p>
+
+      <div id="setup-status-box">
+        <p id="setup-check-venv">⬜ Python environment (.venv-engine)</p>
+        <p id="setup-check-piper">⬜ Piper voice model</p>
+      </div>
+
+      <button id="btn-run-setup">Install engine</button>
+
+      <div id="setup-progress-box" class="hidden">
+        <p id="setup-step">Preparing…</p>
+        <progress id="setup-bar" value="0" max="100"></progress>
+        <pre id="setup-log"></pre>
+      </div>
+    </div>
+
+    <!-- ── ONBOARDING SCREEN ─────────────────────────────────────── -->
+    <div id="screen-onboarding" class="screen hidden">
+      <h1>LiveTranslate — Setup</h1>
+
+      <!-- Step 1: VB-Cable -->
+      <div id="ob-step-1" class="ob-step">
+        <h2>Step 1 — Install VB-Audio Virtual Cable</h2>
+        <p>LiveTranslate routes translated audio through a virtual audio cable so apps like
+           Zoom or Discord hear it as a microphone.</p>
+        <p id="ob-cable-status">Checking…</p>
+        <a id="ob-cable-link" href="#" class="hidden btn-link">
+          Download VB-Cable (free) →
+        </a>
+        <button id="btn-ob-cable-check">Re-check</button>
+        <button id="btn-ob-next-1" class="hidden">Next →</button>
+      </div>
+
+      <!-- Step 2: Piper voice (download if missing) -->
+      <div id="ob-step-2" class="ob-step hidden">
+        <h2>Step 2 — Voice model</h2>
+        <p id="ob-piper-status">Checking voice model…</p>
+        <button id="btn-ob-dl-piper" class="hidden">Download voice model</button>
+        <div id="ob-piper-progress" class="hidden">
+          <progress id="ob-piper-bar" value="0" max="100"></progress>
+          <p id="ob-piper-detail"></p>
+        </div>
+        <button id="btn-ob-next-2" class="hidden">Next →</button>
+      </div>
+
+      <!-- Step 3: Instructions -->
+      <div id="ob-step-3" class="ob-step hidden">
+        <h2>Step 3 — Configure your video call app</h2>
+        <p>In <strong>Zoom / Discord / Teams</strong> (whichever app you use):</p>
+        <ol>
+          <li>Open <strong>Audio Settings</strong>.</li>
+          <li>Set <strong>Microphone</strong> to <em>CABLE Output (VB-Audio Virtual Cable)</em>.</li>
+          <li>Speak Spanish — LiveTranslate will translate and send English audio through the cable.</li>
+        </ol>
+        <p>Your own microphone stays selected inside LiveTranslate.</p>
+        <button id="btn-ob-finish">Finish setup →</button>
+      </div>
+    </div>
+
+    <!-- ── MAIN SCREEN ───────────────────────────────────────────── -->
+    <div id="screen-main" class="screen hidden">
+      <h1>LiveTranslate</h1>
+
       <section>
-        <h2>Offline translation test</h2>
-        <button id="pick">Choose Spanish audio…</button>
-        <span id="chosen">No file</span>
-        <button id="translate" disabled>Translate</button>
-        <p id="tr-status"></p>
-        <audio id="player" controls></audio>
-        <pre id="tr-text"></pre>
-      </section>
-      <script type="module" src="/src/translate.ts"></script>
-      <hr />
-      <section>
-        <h2>Live translation</h2>
         <label for="live-device">Input mic:</label>
-        <select id="live-device"></select>
+        <select id="live-device">
+          <option value="">Default microphone</option>
+        </select>
+
         <label for="live-output-device">Output (cable):</label>
         <select id="live-output-device"></select>
-        <button id="live-toggle">Listen</button>
+
+        <button id="live-toggle">Start translation</button>
         <p id="live-status">Idle</p>
-        <ul id="phrases"></ul>
       </section>
-      <script type="module" src="/src/live.ts"></script>
-    </main>
+
+      <ul id="phrases"></ul>
+
+      <hr />
+      <button id="btn-reopen-onboarding">⚙ Setup</button>
+    </div>
   </body>
 </html>
