@@ -238,6 +238,17 @@ fn run_worker(
                     }
                 }
 
+                // If the model returned the source unchanged the text was already
+                // English (or too short/ambiguous to translate). Skip — it adds no
+                // value to surface an identical ES/EN pair to the user.
+                if let Ok(ref out) = translate_result {
+                    if out.source_text.trim().to_lowercase()
+                        == out.translated_text.trim().to_lowercase()
+                    {
+                        continue;
+                    }
+                }
+
                 let evt = match &translate_result {
                     Ok(out) => PhraseEvent {
                         source_text: out.source_text.clone(),
