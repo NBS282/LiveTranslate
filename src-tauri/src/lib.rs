@@ -91,23 +91,96 @@ async fn translate_file(
     Ok(result)
 }
 
+/// Ensures the translation engine server is running, spawning it if needed.
+/// Returns an immediate error if setup has not been completed yet.
+fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
+    if translation::engine_server::is_server_up() {
+        return Ok(());
+    }
+
+    // If setup is not complete, tell the user right away instead of waiting 2 minutes.
+    let status = setup::check();
+    if !status.ready {
+        return Err(
+            "Setup not complete. Go to the Setup tab and run setup first.".to_string(),
+        );
+    }
+
+    // Setup is done but the server isn't up — try to spawn (or re-spawn if it crashed).
+    {
+        let mut guard = state.server.lock().map_err(|e| e.to_string())?;
+        let needs_spawn = match guard.as_mut() {
+            None => true,
+            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+        };
+        if needs_spawn {
+            match translation::engine_server::spawn_server() {
+                Ok(child) => {
+                    *guard = Some(child);
+                }
+                Err(e) => return Err(format!("Could not start translation engine: {e}")),
+            }
+        }
+    }
+
+    // Let the frontend know warmup is in progress (models can take 30–90 s to load).
+    let _ = app.emit("engine-starting", ());
+
+    translation::engine_server::wait_until_ready(std::time::Duration::from_secs(180))
+        .map_err(|_| {
+            "Translation engine is taking too long to start. Check that setup completed successfully.".to_string()
+        })
+}
+
+/// Stops the live session and kills the engine server (and its whole process tree),
+/// then frees the port. Called on app exit so no engine process is left behind.
+fn shutdown_engine(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+
+    // Stop any running live capture/translation session.
+    if let Ok(mut g) = state.live.lock() {
+        if let Some(sess) = g.take() {
+            sess.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    // Kill the engine server. On Windows `child.kill()` only terminates the direct
+    // process, so use taskkill /T to take down the whole tree (any pip/python helpers).
+    if let Ok(mut g) = state.server.lock() {
+        if let Some(mut child) = g.take() {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let mut k = std::process::Command::new("taskkill");
+                k.args(["/F", "/T", "/PID", &child.id().to_string()])
+                    .creation_flags(0x08000000);
+                let _ = k.output();
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    // Belt-and-suspenders: free the port in case an orphan is still bound to it.
+    translation::engine_server::kill_process_on_port();
+}
+
 #[tauri::command]
-fn start_live_translation(
+async fn start_live_translation(
     device_name: String,
     output_device_name: String,
     app: tauri::AppHandle,
-    state: tauri::State<AppState>,
 ) -> Result<(), String> {
-    // Wait for the engine server to be ready before starting capture.
-    // warmup() can take 10–30s (Parakeet + Opus-MT + Piper on CPU).
-    if !translation::engine_server::is_server_up() {
-        let waited = std::time::Instant::now();
-        translation::engine_server::wait_until_ready(std::time::Duration::from_secs(120))
-            .map_err(|e| format!("translation server not ready after ~{}s: {e}", waited.elapsed().as_secs()))?;
-    }
-    let session = translation::live::start(&device_name, &output_device_name, app)?;
-    *state.live.lock().map_err(|e| e.to_string())? = Some(session);
-    Ok(())
+    // Run on a blocking thread so the engine readiness wait never freezes the UI.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_server_running(&app, &state)?;
+        let session = translation::live::start(&device_name, &output_device_name, app.clone())?;
+        *state.live.lock().map_err(|e| e.to_string())? = Some(session);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
 }
 
 #[tauri::command]
@@ -143,23 +216,26 @@ fn download_piper_voice(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn start_live_translation_ptt(
+async fn start_live_translation_ptt(
     device_name: String,
     output_device_name: String,
     app: tauri::AppHandle,
-    state: tauri::State<AppState>,
 ) -> Result<(), String> {
-    if !translation::engine_server::is_server_up() {
-        let waited = std::time::Instant::now();
-        translation::engine_server::wait_until_ready(std::time::Duration::from_secs(120))
-            .map_err(|e| format!("translation server not ready after ~{}s: {e}", waited.elapsed().as_secs()))?;
-    }
-    // Reset flag so we never start mid-recording state.
-    state.ptt_recording.store(false, std::sync::atomic::Ordering::SeqCst);
-    let ptt_rec = state.ptt_recording.clone();
-    let session = translation::live::start_ptt(&device_name, &output_device_name, app, ptt_rec)?;
-    *state.live.lock().map_err(|e| e.to_string())? = Some(session);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        ensure_server_running(&app, &state)?;
+        // Reset flag so we never start mid-recording state.
+        state
+            .ptt_recording
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let ptt_rec = state.ptt_recording.clone();
+        let session =
+            translation::live::start_ptt(&device_name, &output_device_name, app.clone(), ptt_rec)?;
+        *state.live.lock().map_err(|e| e.to_string())? = Some(session);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
 }
 
 #[tauri::command]
@@ -268,18 +344,21 @@ pub fn run() {
                             let _ = win.set_focus();
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        shutdown_engine(app);
+                        app.exit(0);
+                    }
                     _ => {}
                 })
                 .build(app)?;
 
-            // ── Hide to tray on close (instead of quitting) ────────────────
-            let main_win  = app.get_webview_window("main").unwrap();
-            let win_clone = main_win.clone();
+            // ── Close button shuts everything down (engine included) ───────
+            let main_win   = app.get_webview_window("main").unwrap();
+            let app_handle = app.handle().clone();
             main_win.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = win_clone.hide();
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    shutdown_engine(&app_handle);
+                    app_handle.exit(0);
                 }
             });
 

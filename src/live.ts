@@ -53,6 +53,12 @@ void listen<{ source_text: string; translated_text: string; error: string | null
   },
 );
 
+// ── Engine warmup listener ────────────────────────────────────────────────────
+
+void listen("engine-starting", () => {
+  statusEl.textContent = "Starting translation engine… (first run may take 1–2 min)";
+});
+
 // ── PTT state listener ────────────────────────────────────────────────────────
 
 void listen<boolean>("ptt-state", (e) => {
