@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone)]
 pub struct SetupStatus {
@@ -193,6 +193,13 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
             .map_err(|e| format!("failed to create livetranslate-engine.exe: {e}"))?;
     }
 
+    // Rebrand the binary's PE resources so Task Manager shows "LiveTranslate" and
+    // our icon instead of "Python". Renaming the file alone is not enough — the
+    // task list reads FileDescription/ProductName and the embedded icon.
+    if lt_exe.exists() {
+        rebrand_engine_exe(app, &lt_exe);
+    }
+
     // Bootstrap pip (not included in install_only variant).
     emit_progress(app, "Bootstrapping pip", 8, "");
     let mut pip_bootstrap = std::process::Command::new(&lt_exe);
@@ -211,6 +218,48 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Rewrites the engine binary's PE version-info and icon via bundled rcedit, so the
+/// OS task list shows "LiveTranslate" with our logo instead of "Python".
+/// Best-effort: failures are ignored (the app still works, just keeps the Python name).
+fn rebrand_engine_exe(app: &AppHandle, exe: &PathBuf) {
+    let Ok(res_dir) = app.path().resource_dir() else {
+        return;
+    };
+    let rcedit = res_dir.join("rcedit.exe");
+    if !rcedit.exists() {
+        return;
+    }
+
+    let mut cmd = std::process::Command::new(&rcedit);
+    cmd.arg(exe)
+        .args(["--set-version-string", "FileDescription", "LiveTranslate"])
+        .args(["--set-version-string", "ProductName", "LiveTranslate"])
+        .args(["--set-version-string", "CompanyName", "LiveTranslate"])
+        .args([
+            "--set-version-string",
+            "InternalName",
+            "livetranslate-engine",
+        ])
+        .args([
+            "--set-version-string",
+            "OriginalFilename",
+            "livetranslate-engine.exe",
+        ]);
+
+    let ico = res_dir.join("app-icon.ico");
+    if ico.exists() {
+        cmd.args(["--set-icon", &ico.to_string_lossy()]);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
+    let _ = cmd.output();
 }
 
 // ── Piper voice download ──────────────────────────────────────────────────────

@@ -51,7 +51,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../python": "python"
+      "../python": "python",
+      "tools/rcedit-x64.exe": "rcedit.exe",
+      "icons/icon.ico": "app-icon.ico"
     }
   }
 }
