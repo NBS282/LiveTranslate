@@ -9,9 +9,17 @@ function show(id: string): void {
   document.getElementById(id)?.classList.remove("hidden");
 }
 
-function setCheckIcon(id: string, ok: boolean): void {
-  const icon = document.getElementById(id)?.querySelector<HTMLSpanElement>(".check-icon");
-  if (icon) icon.dataset.state = ok ? "ok" : "idle";
+function friendlySetupText(step: string): string {
+  const s = step.toLowerCase();
+  if (s.includes("python") || s.includes("environment") || s.includes("pip") || s.includes("extract"))
+    return "Preparando todo para ti…";
+  if (s.includes("pytorch") || s.includes("engine") || s.includes("packages"))
+    return "Instalando el motor de traducción…";
+  if (s.includes("voice") || s.includes("piper") || s.includes("model"))
+    return "Descargando la voz…";
+  if (s.includes("complete"))
+    return "Casi listo…";
+  return "Preparando todo para ti…";
 }
 
 function setProgress(
@@ -53,7 +61,7 @@ const setupLog = document.getElementById("setup-log")!;
 
 listen<{ step: string; percent: number; detail: string }>("setup-progress", (e) => {
   const { step, percent, detail } = e.payload;
-  setProgress("setup-bar-fill", "setup-pct", "setup-step", percent, step);
+  setProgress("setup-bar-fill", "setup-pct", "setup-step", percent, friendlySetupText(step));
   if (detail) {
     setupLog.textContent += `${detail}\n`;
     setupLog.scrollTop = setupLog.scrollHeight;
@@ -67,14 +75,10 @@ async function init(): Promise<void> {
     const status = await invoke<{ venv_ok: boolean; piper_voice_ok: boolean; ready: boolean }>(
       "check_setup",
     );
-    setCheckIcon("setup-check-venv", status.venv_ok);
-    setCheckIcon("setup-check-piper", status.piper_voice_ok);
-
     if (status.ready) {
       show("screen-onboarding");
       setStepDot(1);
       void checkVBCable();
-      void checkPiper();
     } else {
       show("screen-setup");
     }
@@ -90,24 +94,29 @@ const btnRunSetup = document.getElementById("btn-run-setup") as HTMLButtonElemen
 
 btnRunSetup.addEventListener("click", () => {
   btnRunSetup.disabled = true;
-  btnRunSetup.textContent = "Installing…";
+  btnRunSetup.textContent = "Instalando…";
   document.getElementById("setup-progress-box")!.classList.remove("hidden");
   setupLog.textContent = "";
   void invoke("start_setup");
 });
 
+document.getElementById("setup-details-toggle")!.addEventListener("click", () => {
+  const log = document.getElementById("setup-log")!;
+  const hidden = log.classList.toggle("hidden");
+  document.getElementById("setup-details-toggle")!.textContent = hidden ? "Ver detalles" : "Ocultar detalles";
+});
+
 listen<{ success: boolean; error?: string }>("setup-done", (e) => {
   if (e.payload.success) {
-    setCheckIcon("setup-check-venv", true);
-    setCheckIcon("setup-check-piper", true);
     show("screen-onboarding");
     setStepDot(1);
     void checkVBCable();
-    void checkPiper();
   } else {
-    document.getElementById("setup-step")!.textContent = `Error: ${e.payload.error ?? "unknown"}`;
+    document.getElementById("setup-step")!.textContent = "Algo salió mal. Mirá los detalles e intentá de nuevo.";
+    document.getElementById("setup-log")!.classList.remove("hidden");
+    document.getElementById("setup-details-toggle")!.textContent = "Ocultar detalles";
     btnRunSetup.disabled = false;
-    btnRunSetup.textContent = "Retry";
+    btnRunSetup.textContent = "Reintentar";
   }
 });
 

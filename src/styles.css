@@ -210,6 +210,18 @@ button {
   border: 1px solid var(--border);
 }
 
+.details-toggle {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding: 0.25rem 0;
+  align-self: flex-start;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.details-toggle:hover { color: var(--text); }
+
 /* ── Step dots ── */
 .step-dots {
   display: flex;

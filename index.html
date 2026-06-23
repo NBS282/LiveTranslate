@@ -14,30 +14,20 @@
       <div class="card">
         <div class="logo-mark">LT</div>
         <h1>LiveTranslate</h1>
-        <p class="muted">One-time engine setup — takes 10–20 min</p>
+        <p class="muted">Preparando tu instalación. Esto se hace una sola vez.</p>
 
-        <div class="check-list">
-          <div class="check-item" id="setup-check-venv">
-            <span class="check-icon" data-state="idle"></span>
-            <span>Python environment (.venv-engine)</span>
-          </div>
-          <div class="check-item" id="setup-check-piper">
-            <span class="check-icon" data-state="idle"></span>
-            <span>Voice model (Piper)</span>
-          </div>
-        </div>
-
-        <button id="btn-run-setup" class="btn-primary btn-full">Install engine</button>
+        <button id="btn-run-setup" class="btn-primary btn-full">Comenzar instalación</button>
 
         <div id="setup-progress-box" class="progress-section hidden">
           <div class="progress-header">
-            <span id="setup-step">Preparing…</span>
+            <span id="setup-step">Preparando todo para ti…</span>
             <span id="setup-pct">0%</span>
           </div>
           <div class="progress-track">
             <div id="setup-bar-fill" class="progress-fill" style="width:0%"></div>
           </div>
-          <pre id="setup-log"></pre>
+          <button id="setup-details-toggle" class="details-toggle" type="button">Ver detalles</button>
+          <pre id="setup-log" class="hidden"></pre>
         </div>
       </div>
     </div>
