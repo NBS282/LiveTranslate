@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const inputSelect = document.querySelector<HTMLSelectElement>("#live-device")!;
@@ -37,19 +37,18 @@ function setOverlayChecked(on: boolean): void {
   overlayToggle.setAttribute("aria-checked", on ? "true" : "false");
 }
 
-// Reflect the stored preference on load.
+// Reflect the stored preference on load and tell the overlay window about it.
 setOverlayChecked(overlayEnabled());
+void emit("overlay-toggle", overlayEnabled());
 
 overlayToggle.addEventListener("click", async () => {
   const next = !overlayEnabled();
   localStorage.setItem("lt.overlayEnabled", next ? "1" : "0");
   setOverlayChecked(next);
-  // Apply live: hide immediately if turned off; show if a session is active.
-  if (next) {
-    if (listening) void (await overlay())?.show();
-  } else {
-    void (await overlay())?.hide();
-  }
+  // The overlay window owns its own visibility — tell it the new state.
+  void emit("overlay-toggle", next);
+  // Re-enabling mid-session: show right away so it's ready for the next phrase.
+  if (next && listening) void (await overlay())?.show();
 });
 
 // ── Phrase listener ───────────────────────────────────────────────────────────

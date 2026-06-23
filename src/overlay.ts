@@ -10,6 +10,7 @@ const win = getCurrentWebviewWindow();
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null;
 let streamTimer: ReturnType<typeof setTimeout> | null = null;
+let showEnabled = true;
 
 async function init(): Promise<void> {
   await win.setIgnoreCursorEvents(true);
@@ -67,10 +68,22 @@ function scheduleHide(): void {
   }, 9000);
 }
 
+// The main window tells us whether on-screen subtitles are enabled.
+void listen<boolean>("overlay-toggle", (e) => {
+  showEnabled = e.payload;
+  if (!showEnabled) {
+    if (hideTimer !== null) clearTimeout(hideTimer);
+    cancelStream();
+    subtitle.classList.remove("visible");
+    void win.hide();
+  }
+});
+
 void listen<{ source_text: string; translated_text: string; error: string | null }>(
   "phrase",
   async (e) => {
     if (e.payload.error) return;
+    if (!showEnabled) return;
 
     await win.show();
     subtitle.classList.add("visible");
