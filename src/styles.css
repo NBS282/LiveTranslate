@@ -25,6 +25,10 @@ body {
   padding: 2rem 1rem;
 }
 
+/* Hide the viewport scrollbar (scroll still works) */
+html, body { scrollbar-width: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+
 /* ── Utilities ── */
 .hidden { display: none !important; }
 .muted  { color: var(--muted); font-size: 0.875rem; }
