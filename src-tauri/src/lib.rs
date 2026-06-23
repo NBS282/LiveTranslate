@@ -269,15 +269,16 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
-                    // Toggle only on key-down. The plugin also fires on key-up, and
-                    // toggling twice per press would cancel the recording instantly,
-                    // so a tap would record only a few milliseconds and get discarded.
-                    if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        return;
-                    }
+                    // Push-to-talk (hold): record while the combo is held, send on release.
+                    // Using store (not toggle) is robust to key-repeat — repeated Pressed
+                    // events keep it true, and the Released event ends the take so the
+                    // producer's falling edge flushes the recorded audio for translation.
+                    let recording =
+                        event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed;
                     let s = app.state::<AppState>();
-                    let was = s.ptt_recording.fetch_xor(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = app.emit("ptt-state", !was);
+                    s.ptt_recording
+                        .store(recording, std::sync::atomic::Ordering::SeqCst);
+                    let _ = app.emit("ptt-state", recording);
                 })
                 .build(),
         )
