@@ -25,6 +25,33 @@ async function overlay(): Promise<WebviewWindow | null> {
   return WebviewWindow.getByLabel("overlay");
 }
 
+// ── Overlay enable/disable preference ─────────────────────────────────────────
+
+const overlayToggle = document.querySelector<HTMLButtonElement>("#overlay-toggle")!;
+
+function overlayEnabled(): boolean {
+  return localStorage.getItem("lt.overlayEnabled") !== "0";
+}
+
+function setOverlayChecked(on: boolean): void {
+  overlayToggle.setAttribute("aria-checked", on ? "true" : "false");
+}
+
+// Reflect the stored preference on load.
+setOverlayChecked(overlayEnabled());
+
+overlayToggle.addEventListener("click", async () => {
+  const next = !overlayEnabled();
+  localStorage.setItem("lt.overlayEnabled", next ? "1" : "0");
+  setOverlayChecked(next);
+  // Apply live: hide immediately if turned off; show if a session is active.
+  if (next) {
+    if (listening) void (await overlay())?.show();
+  } else {
+    void (await overlay())?.hide();
+  }
+});
+
 // ── Phrase listener ───────────────────────────────────────────────────────────
 
 void listen<{ source_text: string; translated_text: string; error: string | null }>(
@@ -40,11 +67,11 @@ void listen<{ source_text: string; translated_text: string; error: string | null
       src.textContent = `ES: ${e.payload.source_text}`;
 
       const arrow = document.createElement("span");
-      arrow.style.color = "var(--violet)";
+      arrow.style.color = "var(--accent)";
       arrow.textContent = " → ";
 
       const tgt = document.createElement("span");
-      tgt.style.color = "var(--cyan)";
+      tgt.style.color = "var(--text)";
       tgt.textContent = `EN: ${e.payload.translated_text}`;
 
       li.append(src, arrow, tgt);
@@ -174,7 +201,7 @@ toggle.addEventListener("click", async () => {
       });
       listening = true;
       setToggle(true);
-      void (await overlay())?.show();
+      if (overlayEnabled()) void (await overlay())?.show();
     } else {
       await invoke("stop_live_translation");
       listening = false;

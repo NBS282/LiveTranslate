@@ -503,6 +503,39 @@ button {
 .mode-btn:hover:not(.active):not(:disabled) { color: var(--text); }
 .mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── Switch (overlay toggle) ── */
+.switch-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.switch {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: background 0.18s, border-color 0.18s;
+}
+.switch .switch-knob {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.18s, background 0.18s;
+}
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch[aria-checked="true"] .switch-knob {
+  transform: translateX(18px);
+  background: #fff;
+}
+
 /* ── PTT config ── */
 .ptt-config { display: flex; flex-direction: column; gap: 0.5rem; }
 
