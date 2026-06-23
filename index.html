@@ -1,171 +1,305 @@
 <!doctype html>
-<html lang="en">
+<html lang="es" class="bg-background">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LiveTranslate</title>
+    <title>LiveTranslate — Traducción de voz en tiempo real</title>
     <link rel="stylesheet" href="/src/styles.css" />
-    <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
-
-    <!-- ── SETUP ─────────────────────────────────────────────────────── -->
-    <div id="screen-setup" class="screen hidden">
-      <div class="card">
-        <div class="logo-mark">LT</div>
-        <h1>LiveTranslate</h1>
-        <p class="muted">Preparando tu instalación. Esto se hace una sola vez.</p>
-
-        <button id="btn-run-setup" class="btn-primary btn-full">Comenzar instalación</button>
-
-        <div id="setup-progress-box" class="progress-section hidden">
-          <div class="progress-header">
-            <span id="setup-step">Preparando todo para ti…</span>
-            <span id="setup-pct">0%</span>
-          </div>
-          <div class="progress-track">
-            <div id="setup-bar-fill" class="progress-fill" style="width:0%"></div>
-          </div>
-          <button id="setup-details-toggle" class="details-toggle" type="button">Ver detalles</button>
-          <pre id="setup-log" class="hidden"></pre>
-        </div>
+    <!-- ════════════ Splash ════════════ -->
+    <div id="splash" class="splash">
+      <div class="splash-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M2 12h20" />
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+      </div>
+      <div class="splash-title">LiveTranslate</div>
+      <div class="splash-spinner">
+        <span class="spinner-dot"></span>
+        <span class="spinner-dot"></span>
+        <span class="spinner-dot"></span>
       </div>
     </div>
 
-    <!-- ── ONBOARDING ────────────────────────────────────────────────── -->
-    <div id="screen-onboarding" class="screen hidden">
+    <!-- ════════════ Setup screen ════════════ -->
+    <section id="screen-setup" class="screen hidden">
       <div class="card">
-        <div class="step-dots">
-          <div class="step-dot active"></div>
-          <div class="step-line"></div>
-          <div class="step-dot"></div>
-          <div class="step-line"></div>
-          <div class="step-dot"></div>
-          <div class="step-line"></div>
-          <div class="step-dot"></div>
+        <div class="brand">
+          <div class="logo-mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M2 12h20" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+          </div>
+          <div class="brand-text">
+            <span class="brand-name">LiveTranslate</span>
+            <span class="brand-sub">Traducción de voz en vivo</span>
+          </div>
         </div>
 
-        <!-- Step 1: VB-Cable -->
-        <div id="ob-step-1" class="ob-step">
-          <div>
-            <h2>Cable de audio virtual</h2>
-            <p class="muted">Necesitás VB-Cable para que Zoom o Discord escuchen el audio traducido como si fuera un micrófono.</p>
+        <div class="setup-body">
+          <div class="setup-hero">
+            <h1>Configuración inicial</h1>
+            <p class="lead">Vamos a preparar el motor de traducción y la voz. Solo toma un momento y se hace una sola vez.</p>
           </div>
+
+          <ul class="feature-list">
+            <li>
+              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+              <span>Traduce tu voz de <strong>español a inglés</strong> mientras hablas.</span>
+            </li>
+            <li>
+              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+              <span>La otra persona <strong>te escucha en inglés</strong> en Zoom, Discord o Meet.</span>
+            </li>
+            <li>
+              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+              <span>Funciona <strong>en tu equipo</strong>, sin enviar tu audio a la nube.</span>
+            </li>
+          </ul>
+
+          <div id="setup-progress-box" class="progress-section hidden">
+            <div class="progress-header">
+              <span id="setup-step">Preparando todo para ti…</span>
+              <span id="setup-pct">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="setup-bar-fill" class="progress-fill" style="width: 0%"></div>
+            </div>
+            <button id="setup-details-toggle" class="details-toggle">Ver detalles</button>
+            <pre id="setup-log" class="hidden"></pre>
+          </div>
+        </div>
+
+        <button id="btn-run-setup" class="btn-primary btn-full">Comenzar instalación</button>
+      </div>
+    </section>
+
+    <!-- ════════════ Onboarding ════════════ -->
+    <section id="screen-onboarding" class="screen hidden">
+      <div class="card">
+        <!-- Step dots -->
+        <div class="step-dots">
+          <span class="step-dot active"></span>
+          <span class="step-line"></span>
+          <span class="step-dot"></span>
+          <span class="step-line"></span>
+          <span class="step-dot"></span>
+          <span class="step-line"></span>
+          <span class="step-dot"></span>
+        </div>
+
+        <!-- ── Step 1: VB-Cable ── -->
+        <div id="ob-step-1" class="ob-step">
+          <div class="ob-head">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M6 12h.01M10 12h.01M14 12h.01M18 12h.01" /></svg>
+            </div>
+            <div class="ob-head-text">
+              <span class="step-meta">Paso 1 de 4</span>
+              <h2>Instalá el cable de audio</h2>
+            </div>
+          </div>
+
+          <p class="lead">Necesitamos un micrófono virtual (<strong>VB-Cable</strong>) para enviar tu voz traducida a las apps de llamadas.</p>
+
           <div id="ob-cable-status" class="status-badge">
             <span class="badge-dot"></span>
             <span class="badge-text">Verificando…</span>
           </div>
-          <div class="btn-row">
+
+          <div id="ob-cable-install" class="note-card hidden" role="button" tabindex="0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+            <span><strong>Descargar VB-Cable.</strong> Tras instalarlo, reiniciá si te lo pide y volvé a verificar.</span>
+          </div>
+
+          <div class="step-actions">
             <button id="btn-ob-cable-check" class="btn-secondary">Re-verificar</button>
-            <button id="ob-cable-install" class="btn-link hidden">Descargar VB-Cable →</button>
-            <button id="btn-ob-next-1" class="btn-primary hidden">Continuar →</button>
+            <button id="btn-ob-next-1" class="btn-primary flex-1 hidden">Continuar</button>
           </div>
         </div>
 
-        <!-- Step 2: Connect the audio -->
+        <!-- ── Step 2: connect audio ── -->
         <div id="ob-step-2" class="ob-step hidden">
-          <div>
-            <h2>Conectá el audio</h2>
-            <p class="muted">Así viaja tu voz traducida hasta la videollamada:</p>
+          <div class="ob-head">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+            </div>
+            <div class="ob-head-text">
+              <span class="step-meta">Paso 2 de 4</span>
+              <h2>Conectá el audio</h2>
+            </div>
           </div>
+
+          <p class="lead">Así viaja tu voz: hablás por tu micro, LiveTranslate la traduce y la envía al cable virtual.</p>
+
           <div class="audio-diagram">
-            <div class="audio-row"><span>Tu micrófono</span><span class="arrow">→</span><span>LiveTranslate</span></div>
-            <div class="audio-row"><span>LiveTranslate</span><span class="arrow">→</span><span><em>CABLE Input</em> (elegilo como Output acá)</span></div>
-            <div class="audio-row"><span><em>CABLE Output</em></span><span class="arrow">→</span><span>micrófono en Discord / Zoom / Teams</span></div>
+            <div class="audio-row">
+              <div class="node"><em>Tu micrófono</em><span>Hablás en español</span></div>
+              <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg></span>
+              <span>LiveTranslate</span>
+            </div>
+            <div class="audio-row">
+              <div class="node"><em>LiveTranslate</em><span>Traduce a inglés</span></div>
+              <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg></span>
+              <span>CABLE Input</span>
+            </div>
+            <div class="audio-row">
+              <div class="node"><em>Zoom / Discord</em><span>Micrófono de la app</span></div>
+              <span class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg></span>
+              <span>CABLE Output</span>
+            </div>
           </div>
-          <button id="btn-ob-next-2" class="btn-primary btn-full">Continuar →</button>
+
+          <div class="note-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+            <span>En tu app de llamadas, elegí <em>CABLE Output</em> como micrófono. La otra persona escuchará la traducción.</span>
+          </div>
+
+          <div class="step-actions">
+            <button id="btn-ob-next-2" class="btn-primary btn-full">Continuar</button>
+          </div>
         </div>
 
-        <!-- Step 3: Shortcuts -->
+        <!-- ── Step 3: shortcuts ── -->
         <div id="ob-step-3" class="ob-step hidden">
-          <div>
-            <h2>Atajos de teclado</h2>
-            <p class="muted">Para el modo Push-to-talk podés definir un atajo:</p>
+          <div class="ob-head">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" /></svg>
+            </div>
+            <div class="ob-head-text">
+              <span class="step-meta">Paso 3 de 4</span>
+              <h2>Elegí cómo hablar</h2>
+            </div>
           </div>
+
+          <p class="lead">Tenés dos formas de traducir, y podés cambiar entre ellas en cualquier momento.</p>
+
           <ul class="instructions">
-            <li>Es un <strong>combo de 2 o más teclas</strong> (por ejemplo <em>Ctrl + Shift + Espacio</em>).</li>
-            <li><strong>Mantenelo apretado</strong> mientras hablás; al soltarlo se traduce lo dicho.</li>
-            <li>Funciona mientras <strong>LiveTranslate esté abierto</strong>, aunque la ventana no esté en foco.</li>
+            <li><strong>Automático (VAD):</strong> LiveTranslate detecta cuándo hablás y traduce sola. Ideal para conversaciones fluidas.</li>
+            <li><strong>Pulsar para hablar (PTT):</strong> mantenés un atajo de teclado mientras hablás. Ideal en lugares con ruido.</li>
           </ul>
-          <button id="btn-ob-next-3" class="btn-primary btn-full">Continuar →</button>
+
+          <div class="note-card">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+            <span>Si elegís <em>PTT</em>, podrás asignar tu atajo (ej. <strong>Ctrl + Espacio</strong>) en la pantalla principal.</span>
+          </div>
+
+          <div class="step-actions">
+            <button id="btn-ob-next-3" class="btn-primary btn-full">Continuar</button>
+          </div>
         </div>
 
-        <!-- Step 4: Done -->
+        <!-- ── Step 4: finish ── -->
         <div id="ob-step-4" class="ob-step hidden">
-          <div>
-            <h2>¡Todo listo!</h2>
-            <p class="muted">Ya podés empezar a traducir en tus llamadas.</p>
+          <div class="ob-head">
+            <div class="step-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335" /><path d="m9 11 3 3L22 4" /></svg>
+            </div>
+            <div class="ob-head-text">
+              <span class="step-meta">Paso 4 de 4</span>
+              <h2>¡Todo listo!</h2>
+            </div>
           </div>
-          <button id="btn-ob-finish" class="btn-primary btn-full">Empezar a usar LiveTranslate →</button>
+
+          <p class="lead">Ya podés empezar a traducir. Recordá tres cosas para que todo funcione:</p>
+
+          <ul class="instructions">
+            <li>Seleccioná tu <strong>micrófono</strong> y la <strong>salida</strong> (CABLE Input).</li>
+            <li>En tu app de llamadas, usá <em>CABLE Output</em> como micrófono.</li>
+            <li>Pulsá <strong>Iniciar</strong> y empezá a hablar en español.</li>
+          </ul>
+
+          <div class="step-actions">
+            <button id="btn-ob-finish" class="btn-primary btn-full">Ir a la app</button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- ── MAIN ──────────────────────────────────────────────────────── -->
-    <div id="screen-main" class="screen hidden">
+    <!-- ════════════ Main screen ════════════ -->
+    <section id="screen-main" class="screen hidden">
       <div class="card">
-        <div class="main-header">
-          <div class="app-name">
-            <span class="status-dot" id="status-dot"></span>
-            LiveTranslate
+        <header class="main-header">
+          <div class="app-info">
+            <span id="status-dot" class="status-dot"></span>
+            <span class="app-name">LiveTranslate</span>
+            <span class="lang-pill">ES <span class="arrow">→</span> EN</span>
           </div>
-          <button id="btn-reopen-onboarding" class="btn-icon" title="Setup">⚙</button>
-        </div>
-
-        <div class="field">
-          <label class="field-label" for="live-device">Microphone</label>
-          <select id="live-device" class="select">
-            <option value="">Default microphone</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label class="field-label" for="live-output-device">Output (VB-Cable)</label>
-          <select id="live-output-device" class="select"></select>
-        </div>
-
-        <div class="field">
-          <label class="field-label">Translation mode</label>
-          <div class="mode-selector" id="mode-selector">
-            <button class="mode-btn active" data-mode="vad">Auto (VAD)</button>
-            <button class="mode-btn" data-mode="ptt">Push-to-talk</button>
-          </div>
-        </div>
-
-        <div class="field switch-field">
-          <label class="field-label" for="overlay-toggle">Subtítulos en pantalla</label>
-          <button id="overlay-toggle" class="switch" role="switch" aria-checked="true" type="button">
-            <span class="switch-knob"></span>
+          <button id="btn-reopen-onboarding" class="btn-icon" title="Ver la guía de nuevo" aria-label="Ver la guía de nuevo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
           </button>
-        </div>
+        </header>
 
-        <div id="ptt-config" class="ptt-config hidden">
-          <div class="field">
-            <label class="field-label">Shortcut</label>
-            <div class="shortcut-row">
-              <span id="ptt-shortcut-display" class="shortcut-badge">Not set</span>
-              <button id="btn-capture-shortcut" class="btn-secondary">Set shortcut</button>
+        <!-- Devices panel -->
+        <div class="panel">
+          <span class="panel-title">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /></svg>
+            Dispositivos de audio
+          </span>
+          <div class="device-grid">
+            <div class="field">
+              <label class="field-label" for="live-device">Entrada (tu micrófono)</label>
+              <select id="live-device" class="select"></select>
             </div>
-            <p class="ptt-hint muted">Mantené el atajo apretado mientras hablás; soltá para traducir</p>
+            <div class="field">
+              <label class="field-label" for="live-output-device">Salida (envía a la llamada)</label>
+              <select id="live-output-device" class="select"></select>
+            </div>
           </div>
         </div>
 
-        <div id="ptt-recording-indicator" class="ptt-rec-indicator hidden">
-          <span class="rec-dot"></span>
-          <span>Recording…</span>
+        <!-- Mode + overlay panel -->
+        <div class="panel">
+          <span class="panel-title">Modo de captura</span>
+          <div class="mode-controls">
+            <div id="mode-selector" class="mode-selector">
+              <button class="mode-btn active" data-mode="vad">Auto</button>
+              <button class="mode-btn" data-mode="ptt">PTT</button>
+            </div>
+            <div class="overlay-group">
+              <span class="overlay-label">Subtítulos</span>
+              <button id="overlay-toggle" class="switch" role="switch" aria-checked="true" aria-label="Mostrar subtítulos en pantalla">
+                <span class="switch-knob"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- PTT config (hidden unless PTT) -->
+          <div id="ptt-config" class="ptt-config hidden">
+            <label class="field-label">Atajo para hablar</label>
+            <div class="shortcut-row">
+              <span id="ptt-shortcut-display" class="shortcut-badge">Sin asignar</span>
+              <button id="btn-capture-shortcut" class="btn-secondary">Asignar</button>
+            </div>
+            <div id="ptt-recording-indicator" class="ptt-rec-indicator hidden">
+              <span class="rec-dot"></span>
+              Grabando…
+            </div>
+          </div>
         </div>
 
+        <!-- Toggle -->
         <button id="live-toggle" class="btn-toggle">
           <span class="toggle-icon">▶</span>
-          <span class="toggle-label">Start</span>
+          <span class="toggle-label">Iniciar</span>
         </button>
+        <p id="live-status" class="live-status-text">Inactivo</p>
 
-        <p id="live-status" class="live-status-text">Idle</p>
-
-        <div class="phrases-header">Phrases</div>
-        <ul id="phrases"></ul>
+        <!-- Phrases feed -->
+        <div class="phrases-section">
+          <div class="phrases-header">
+            <span>Traducciones</span>
+          </div>
+          <ul id="phrases"></ul>
+        </div>
       </div>
-    </div>
+    </section>
 
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

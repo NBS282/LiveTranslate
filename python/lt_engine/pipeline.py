@@ -62,7 +62,7 @@ def translate(text: str) -> str:
     """Translate Spanish text to English using opus-mt-tc-big-es-en (CPU)."""
     tok, model = _get_mt()
     inputs = tok([text], return_tensors="pt", padding=True, truncation=True, max_length=512)
-    gen = model.generate(**inputs)
+    gen = model.generate(**inputs, max_length=512)
     return tok.batch_decode(gen, skip_special_tokens=True)[0]
 
 

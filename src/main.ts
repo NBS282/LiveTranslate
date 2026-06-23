@@ -4,9 +4,25 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// Minimum splash display time so the user sees it.
+const SPLASH_MIN_MS = 1200;
+const splashStart = performance.now();
+
 function show(id: string): void {
   document.querySelectorAll(".screen").forEach((el) => el.classList.add("hidden"));
   document.getElementById(id)?.classList.remove("hidden");
+  // Hide splash once a screen transitions in, but keep it visible for
+  // at least SPLASH_MIN_MS so the user perceives the loading state.
+  const splash = document.getElementById("splash");
+  if (splash) {
+    const elapsed = performance.now() - splashStart;
+    const delay = Math.max(0, SPLASH_MIN_MS - elapsed);
+    if (delay > 0) {
+      setTimeout(() => splash.classList.add("hidden"), delay);
+    } else {
+      splash.classList.add("hidden");
+    }
+  }
 }
 
 function friendlySetupText(step: string): string {

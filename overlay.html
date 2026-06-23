@@ -1,100 +1,19 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LiveTranslate Overlay</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-
-      html, body {
-        background: transparent;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        -webkit-font-smoothing: antialiased;
-      }
-
-      #subtitle {
-        position: fixed;
-        inset: 8px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
-        padding: 14px 24px;
-        opacity: 0;
-        transform: translateY(6px);
-        transition: opacity 0.22s ease, transform 0.22s ease;
-        pointer-events: none;
-      }
-
-      #subtitle.visible {
-        opacity: 1;
-        transform: translateY(0);
-      }
-
-      .backdrop {
-        position: absolute;
-        inset: 0;
-        background: rgba(10, 10, 11, 0.82);
-        backdrop-filter: blur(20px) saturate(1.2);
-        -webkit-backdrop-filter: blur(20px) saturate(1.2);
-        border-radius: 12px;
-        border: 1px solid rgba(35, 35, 39, 0.9);
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
-      }
-
-      .content {
-        position: relative;
-        z-index: 1;
-        width: 100%;
-        text-align: center;
-      }
-
-      #src-text {
-        font-size: 12px;
-        font-weight: 400;
-        color: rgba(107, 107, 112, 0.9);
-        line-height: 1.5;
-        letter-spacing: 0.02em;
-        margin-bottom: 3px;
-      }
-
-      #tgt-text {
-        font-size: 18px;
-        font-weight: 500;
-        color: #f1f5f9;
-        line-height: 1.4;
-        letter-spacing: 0.01em;
-        min-height: 1.5em;
-      }
-
-      .cursor {
-        display: inline-block;
-        width: 2px;
-        height: 0.9em;
-        background: #6366F1;
-        margin-left: 1px;
-        vertical-align: text-bottom;
-        border-radius: 1px;
-        animation: blink 0.9s step-end infinite;
-      }
-
-      @keyframes blink {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0; }
-      }
-    </style>
+    <title>Subtítulos</title>
+    <link rel="stylesheet" href="/src/overlay.css" />
   </head>
   <body>
-    <div id="subtitle">
-      <div class="backdrop"></div>
-      <div class="content">
-        <div id="src-text"></div>
-        <div id="tgt-text"><span id="tgt-chars"></span></div>
+    <div id="subtitle" class="subtitle">
+      <div class="subtitle-card">
+        <span class="lang-tag">EN</span>
+        <div class="subtitle-body">
+          <p id="tgt-chars" class="tgt"></p>
+          <p id="src-text" class="src"></p>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/overlay.ts"></script>
