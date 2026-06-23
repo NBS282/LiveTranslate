@@ -1,11 +1,11 @@
 /* ════════════════════════════════════════════════════════════════════
-   LiveTranslate — Editorial Instrument
-   Warm paper · Fraunces display serif · two-tone bilingual identity
+   LiveTranslate — Professional Instrument
+   Warm paper · Bricolage Grotesque display · two-tone bilingual identity
    Terracotta = espanol (your voice) · Cobalt = ingles (delivered)
    Window target ≈ 480 × 680
    ════════════════════════════════════════════════════════════════════ */
 
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;450;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;450;500;600;700&display=swap");
 
 *,
 *::before,
@@ -54,7 +54,9 @@
   --shadow-lg: 0 24px 60px rgba(34, 30, 23, 0.16);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-display: "Bricolage Grotesque", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* legacy alias kept so any older selectors still resolve */
+  --font-serif: var(--font-display);
   --font-mono: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
 
   /* Inline-style aliases (used by TS code) */
@@ -142,10 +144,9 @@ body {
   height: 30px;
 }
 .splash-title {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 2rem;
   font-weight: 500;
-  font-style: italic;
   color: var(--ink);
   letter-spacing: -0.01em;
 }
@@ -236,10 +237,9 @@ body {
   line-height: 1.15;
 }
 .brand-name {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 1.2rem;
-  font-weight: 500;
-  font-style: italic;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .brand-sub {
@@ -252,17 +252,17 @@ body {
 }
 
 h1 {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 2.1rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.05;
   letter-spacing: -0.015em;
   color: var(--ink);
 }
 h2 {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 1.5rem;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.01em;
   color: var(--ink);
@@ -682,9 +682,13 @@ button {
 .audio-row:last-child {
   border-bottom: 1px solid var(--hair);
 }
-.audio-row .node {
+.audio-row > * {
   display: flex;
+  align-items: center;
+}
+.audio-row .node {
   flex-direction: column;
+  justify-content: center;
   gap: 1px;
 }
 .audio-row em {
@@ -703,11 +707,12 @@ button {
   height: 18px;
 }
 .audio-row span:last-child {
-  text-align: right;
+  justify-content: flex-end;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   letter-spacing: 0.02em;
   color: var(--en);
+  text-align: right;
 }
 .step-actions {
   margin-top: auto;
@@ -731,10 +736,9 @@ button {
   gap: 0.55rem;
 }
 .app-name {
-  font-family: var(--font-serif);
+  font-family: var(--font-display);
   font-size: 1.25rem;
-  font-weight: 500;
-  font-style: italic;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .status-dot {
