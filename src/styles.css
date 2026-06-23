@@ -1,16 +1,15 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:           #0b0b14;
-  --surface:      #13131f;
-  --border:       #1e1e32;
-  --violet:       #7c3aed;
-  --violet-dim:   #6d28d9;
-  --cyan:         #22d3ee;
-  --green:        #10b981;
-  --red:          #f43f5e;
-  --text:         #f1f5f9;
-  --muted:        #64748b;
+  --bg:          #0A0A0B;
+  --surface:     #141416;
+  --surface-2:   #1B1B1E;
+  --border:      #232327;
+  --accent:      #6366F1;
+  --accent-dim:  #4F46E5;
+  --danger:      #E5484D;
+  --text:        #EDEDEF;
+  --muted:       #6B6B70;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 15px;
   line-height: 1.55;
@@ -51,16 +50,17 @@ body {
 
 /* ── Logo mark ── */
 .logo-mark {
-  width: 46px;
-  height: 46px;
-  background: linear-gradient(135deg, var(--violet), var(--cyan));
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
   font-size: 0.95rem;
-  color: white;
+  color: var(--text);
   letter-spacing: -0.5px;
   flex-shrink: 0;
 }
@@ -90,10 +90,10 @@ button {
 }
 
 .btn-primary {
-  background: var(--violet);
+  background: var(--accent);
   color: white;
 }
-.btn-primary:hover:not(:disabled) { background: var(--violet-dim); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
 .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .btn-secondary {
@@ -101,13 +101,13 @@ button {
   border: 1px solid var(--border);
   color: var(--text);
 }
-.btn-secondary:hover:not(:disabled) { border-color: var(--violet); color: var(--violet); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .btn-link {
   background: transparent;
   border: none;
-  color: var(--cyan);
+  color: var(--accent);
   padding: 0.6rem 0;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -129,7 +129,7 @@ button {
   justify-content: center;
   font-size: 0.9rem;
 }
-.btn-icon:hover { border-color: var(--violet); color: var(--violet); }
+.btn-icon:hover { border-color: var(--accent); color: var(--accent); }
 
 .btn-row {
   display: flex;
@@ -166,9 +166,9 @@ button {
   transition: all 0.2s;
 }
 .check-icon[data-state="ok"] {
-  background: var(--green);
-  border-color: var(--green);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--green) 50%, transparent);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 /* ── Progress ── */
@@ -190,7 +190,7 @@ button {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--violet), var(--cyan));
+  background: var(--accent);
   border-radius: 999px;
   transition: width 0.3s ease;
   min-width: 4px;
@@ -225,10 +225,10 @@ button {
   flex-shrink: 0;
 }
 .step-dot.active {
-  background: var(--violet);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--violet) 60%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.step-dot.done { background: var(--green); }
+.step-dot.done { background: var(--accent); }
 
 .step-line {
   flex: 1;
@@ -260,12 +260,12 @@ button {
 }
 .badge-text { color: var(--muted); transition: color 0.2s; }
 
-.status-badge.ok  { border-color: color-mix(in srgb, var(--green) 30%, var(--border)); }
-.status-badge.ok  .badge-dot  { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 50%, transparent); }
+.status-badge.ok  { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.status-badge.ok  .badge-dot  { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent); }
 .status-badge.ok  .badge-text { color: var(--text); }
 
-.status-badge.err { border-color: color-mix(in srgb, var(--red) 30%, var(--border)); }
-.status-badge.err .badge-dot  { background: var(--red); }
+.status-badge.err { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
+.status-badge.err .badge-dot  { background: var(--danger); }
 .status-badge.err .badge-text { color: var(--text); }
 
 /* ── Card entry animation ── */
@@ -277,14 +277,9 @@ button {
 
 /* Glassmorphism on onboarding card */
 #screen-onboarding .card {
-  background: rgba(19, 19, 31, 0.88);
-  backdrop-filter: blur(28px) saturate(1.6);
-  -webkit-backdrop-filter: blur(28px) saturate(1.6);
-  border-color: rgba(124, 58, 237, 0.22);
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,0.05) inset,
-    0 24px 64px rgba(0,0,0,0.55),
-    0 0 48px rgba(124, 58, 237, 0.07);
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
 
 /* Onboarding step slide-in */
@@ -308,7 +303,7 @@ button {
   color: var(--muted);
 }
 .instructions strong { color: var(--text); }
-.instructions em { color: var(--cyan); font-style: normal; }
+.instructions em { color: var(--accent); font-style: normal; }
 
 /* ── Main screen ── */
 .main-header {
@@ -335,8 +330,8 @@ button {
   flex-shrink: 0;
 }
 .status-dot.active {
-  background: var(--green);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--green) 60%, transparent);
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 /* ── Fields ── */
@@ -368,11 +363,11 @@ button {
   background-position: right 0.75rem center;
   padding-right: 2.25rem;
 }
-.select:focus { border-color: var(--violet); }
+.select:focus { border-color: var(--accent); }
 
 /* ── Toggle button ── */
 .btn-toggle {
-  background: var(--violet);
+  background: var(--accent);
   color: white;
   width: 100%;
   padding: 0.875rem;
@@ -385,15 +380,15 @@ button {
   gap: 0.5rem;
   transition: background 0.2s, transform 0.15s;
 }
-.btn-toggle:hover:not(:disabled) { background: var(--violet-dim); transform: translateY(-1px); }
+.btn-toggle:hover:not(:disabled) { background: var(--accent-dim); transform: translateY(-1px); }
 .btn-toggle:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .btn-toggle.running {
-  background: color-mix(in srgb, var(--red) 15%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
-  color: var(--red);
+  background: color-mix(in srgb, var(--danger) 15%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
 }
 .btn-toggle.running:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--red) 20%, var(--bg));
+  background: color-mix(in srgb, var(--danger) 20%, var(--bg));
 }
 .toggle-icon { font-size: 0.8rem; }
 
@@ -433,14 +428,14 @@ button {
   padding: 0.55rem 0.75rem;
   background: var(--bg);
   border-radius: 8px;
-  border-left: 3px solid var(--violet);
+  border-left: 3px solid var(--accent);
   font-size: 0.825rem;
   line-height: 1.45;
   color: var(--text);
 }
 #phrases li.error {
-  border-left-color: var(--red);
-  color: var(--red);
+  border-left-color: var(--danger);
+  color: var(--danger);
 }
 
 /* ── Mode selector ── */
@@ -493,18 +488,18 @@ button {
   border-radius: 7px;
   font-size: 0.78rem;
   font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
-  color: var(--cyan);
+  color: var(--accent);
   letter-spacing: 0.02em;
   min-width: 96px;
 }
 .shortcut-badge.capturing {
-  border-color: var(--violet);
-  color: var(--violet);
+  border-color: var(--accent);
+  color: var(--accent);
   animation: pulse-border 0.7s ease-in-out infinite alternate;
 }
 @keyframes pulse-border {
-  from { border-color: var(--violet); }
-  to   { border-color: var(--cyan); }
+  from { border-color: var(--accent); }
+  to   { border-color: var(--accent); }
 }
 
 .ptt-hint { font-size: 0.72rem; }
@@ -515,11 +510,11 @@ button {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, var(--red) 10%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   border-radius: 8px;
   font-size: 0.8rem;
-  color: var(--red);
+  color: var(--danger);
   font-weight: 500;
 }
 
@@ -527,7 +522,7 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--red);
+  background: var(--danger);
   flex-shrink: 0;
   animation: rec-pulse 1s ease-in-out infinite;
 }
