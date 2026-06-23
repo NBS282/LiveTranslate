@@ -13,9 +13,9 @@
 
 :root {
   /* Cobalt = the delivered (English) voice, matching the main window identity.
-     Brightened so it stays legible on the dark, semi-transparent card. */
-  --accent: #6f9be8;
-  --accent-shadow: rgba(111, 155, 232, 0.45);
+     Uses the app's --en hue, brightened just enough for legibility on dark glass. */
+  --accent: #3066b0;
+  --accent-shadow: rgba(48, 102, 176, 0.5);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
