@@ -387,7 +387,47 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
+    // ── Step 5: ensure lt_engine source is available ──────────────────────────
+    // In production, lib.rs copies the bundled python/ from resources to data_dir on
+    // every launch, but that copy can fail silently. We verify here so the server can
+    // always find the lt_engine package (via PYTHONPATH) after setup finishes.
+    let python_src = crate::translation::sidecar::python_dir();
+    if !python_src.exists() {
+        emit_progress(app, "Copying engine source", 97, "");
+        match app.path().resource_dir() {
+            Ok(res_dir) => {
+                let bundled = res_dir.join("python");
+                if bundled.exists() {
+                    copy_dir_recursive(&bundled, &python_src)?;
+                } else {
+                    return Err("Engine source (lt_engine) not found in app resources. \
+                         Please reinstall LiveTranslate."
+                        .to_string());
+                }
+            }
+            Err(e) => {
+                return Err(format!("Cannot locate app resources: {e}"));
+            }
+        }
+    }
+
     emit_progress(app, "Setup complete", 100, "");
+    Ok(())
+}
+
+// ── Directory copy ────────────────────────────────────────────────────────────
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+            copy_dir_recursive(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), &dst_path).map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 

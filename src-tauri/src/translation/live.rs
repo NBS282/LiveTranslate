@@ -5,9 +5,14 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
+use serde_json;
 use tauri::{AppHandle, Emitter};
 
 use crate::translation::segmenter::{Segmenter, FRAME_SAMPLES_16K};
+
+/// Minimum segment length in samples at 16 kHz (0.5 s).
+/// Segments shorter than this are silently dropped.
+const MIN_SEGMENT_SAMPLES: usize = 8_000;
 
 /// Volume of the mic passthrough relative to full scale (0.0 – 1.0).
 /// Low enough to be a "comfort signal" without drowning out the caller.
@@ -218,12 +223,25 @@ fn run_worker(
                     eprintln!("live: dropped {dropped} stale segment(s) to stay current");
                 }
 
+                // PTT diag: emit event so frontend can show producer→worker flow.
+                let _ = app.emit("ptt-diag", serde_json::json!({
+                    "event": "worker-received",
+                    "samples": samples.len(),
+                    "duration_s": samples.len() as f64 / 16_000.0,
+                }));
+
                 // Defense-in-depth: discard segments shorter than 0.5s (8000 samples at 16 kHz).
                 // Whisper hallucinates or returns no text on very short clips; the VAD
                 // min-voiced guard is the first line of defense, this is the fallback.
-                if samples.len() < 8_000 {
+                if samples.len() < MIN_SEGMENT_SAMPLES {
+                    let _ = app.emit("ptt-diag", serde_json::json!({
+                        "event": "worker-discarded-too-short",
+                        "samples": samples.len(),
+                        "min": MIN_SEGMENT_SAMPLES,
+                    }));
                     continue;
                 }
+
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
                     let result = crate::translation::engine_server::translate(&p);
                     let _ = std::fs::remove_file(&p);
@@ -233,6 +251,10 @@ fn run_worker(
                 // 422 "transcription produced no text" means Whisper got audio but found
                 // no speech — silence, breath, or mic bleed. Skip the event silently.
                 if let Err(ref e) = translate_result {
+                    let _ = app.emit("ptt-diag", serde_json::json!({
+                        "event": "translate-error",
+                        "error": e,
+                    }));
                     if e.contains("transcription produced no text") {
                         continue;
                     }
@@ -245,6 +267,10 @@ fn run_worker(
                     if out.source_text.trim().to_lowercase()
                         == out.translated_text.trim().to_lowercase()
                     {
+                        let _ = app.emit("ptt-diag", serde_json::json!({
+                            "event": "skipped-source-equals-target",
+                            "source": out.source_text,
+                        }));
                         continue;
                     }
                 }
@@ -573,6 +599,10 @@ pub fn start_ptt(
 /// PTT producer: captures audio continuously but only accumulates samples while
 /// `ptt_recording` is true. On the falling edge (true→false) it sends the entire
 /// buffered recording to the worker as a single segment.
+///
+/// Implementation based on Handy's proven pattern: polls the recording flag at
+/// the TOP of every loop iteration (every audio callback, ~10 ms) so the falling
+/// edge is detected IMMEDIATELY — no race window between frame boundaries.
 fn run_producer_ptt(
     device: cpal::Device,
     in_rate: usize,
@@ -614,6 +644,32 @@ fn run_producer_ptt(
     let mut was_recording = false;
 
     while !stop.load(Ordering::Relaxed) {
+        // Poll recording flag at the TOP of every loop iteration (every audio
+        // callback, ~10 ms), NOT only at frame boundaries (~30 ms).
+        // This mirrors Handy's proven approach — detect the falling edge
+        // IMMEDIATELY with no race window between frame boundaries.
+        let now_recording = ptt_recording.load(Ordering::Relaxed);
+
+        // ── Rising edge: start fresh ───────────────────────────────────
+        if now_recording && !was_recording {
+            ptt_buffer.clear();
+        }
+
+        // ── Falling edge: release was just detected — flush NOW ────────
+        if was_recording && !now_recording {
+            if !ptt_buffer.is_empty() {
+                if ptt_buffer.len() >= MIN_SEGMENT_SAMPLES {
+                    let seg = std::mem::take(&mut ptt_buffer);
+                    let _ = seg_tx.send(seg);
+                } else {
+                    ptt_buffer.clear();
+                }
+            }
+        }
+
+        was_recording = now_recording;
+
+        // ── Audio processing (same as VAD mode) ────────────────────────
         match samp_rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(mono) => {
                 for s in resampler.process(&mono) {
@@ -621,22 +677,10 @@ fn run_producer_ptt(
                     frame_acc.push(sample);
 
                     if frame_acc.len() == FRAME_SAMPLES_16K {
-                        let now_recording = ptt_recording.load(Ordering::Relaxed);
-
                         if now_recording {
                             ptt_buffer.extend_from_slice(&frame_acc);
                             let _ = pass_tx.send(frame_acc.clone());
                         }
-
-                        // Falling edge: recording just stopped — flush the buffer.
-                        if was_recording && !now_recording && ptt_buffer.len() >= 8_000 {
-                            let seg = std::mem::take(&mut ptt_buffer);
-                            let _ = seg_tx.send(seg);
-                        } else if was_recording && !now_recording {
-                            ptt_buffer.clear();
-                        }
-
-                        was_recording = now_recording;
                         frame_acc.clear();
                     }
                 }

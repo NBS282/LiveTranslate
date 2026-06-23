@@ -93,15 +93,33 @@ pub fn is_server_up() -> bool {
 pub fn spawn_server() -> Result<Child, String> {
     kill_process_on_port();
     let program = crate::translation::sidecar::engine_python();
-    let cwd = crate::translation::sidecar::python_dir();
+    let python_src = crate::translation::sidecar::python_dir();
+
+    // Add python_src to PYTHONPATH so `lt_engine` is importable regardless of cwd.
+    let path_sep = if cfg!(windows) { ";" } else { ":" };
+    let python_src_str = python_src.to_string_lossy();
+    let pythonpath = match std::env::var("PYTHONPATH") {
+        Ok(existing) if !existing.is_empty() => {
+            format!("{}{path_sep}{existing}", python_src_str)
+        }
+        _ => python_src_str.into_owned(),
+    };
+
     let mut cmd = Command::new(&program);
     cmd.args(["-m", "lt_engine.server"])
-        .current_dir(cwd)
+        .env("PYTHONPATH", &pythonpath)
         .env(
             "PIPER_VOICE",
             crate::setup::piper_voice_path().to_string_lossy().as_ref(),
         )
         .stderr(Stdio::piped());
+
+    // Only set current_dir when the directory exists. On Windows, an invalid
+    // current_dir causes ERROR_DIRECTORY (os error 267) before the process starts.
+    if python_src.exists() {
+        cmd.current_dir(&python_src);
+    }
+
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

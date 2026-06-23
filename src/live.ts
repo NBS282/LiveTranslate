@@ -86,22 +86,51 @@ void listen("engine-starting", () => {
 });
 
 // ── PTT state listener ────────────────────────────────────────────────────────
+// Only show the recording indicator when in PTT mode — VAD mode ignores it.
 
 void listen<boolean>("ptt-state", (e) => {
-  recIndicator.classList.toggle("hidden", !e.payload);
+  recIndicator.classList.toggle("hidden", mode !== "ptt" || !e.payload);
+});
+
+// PTT diagnostics — log `ptt-diag` events to the browser console so the user
+// can see them when running in dev mode (F12 → Console).
+void listen<any>("ptt-diag", (e) => {
+  console.log("[ptt-diag]", JSON.stringify(e.payload));
 });
 
 // ── Mode selector ─────────────────────────────────────────────────────────────
 
 modeSelector.querySelectorAll<HTMLButtonElement>(".mode-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    if (listening) return;
-    mode = btn.dataset["mode"] as "vad" | "ptt";
+  btn.addEventListener("click", async () => {
+    const newMode = btn.dataset["mode"] as "vad" | "ptt";
+
+    // Block mode switch only when actively translating in VAD
+    if (mode === "vad" && listening) return;
+
+    // If leaving PTT mid-session, stop first
+    if (mode === "ptt" && listening) {
+      await stopSession();
+    }
+
+    // Hide recording indicator when leaving PTT mode
+    if (mode === "ptt" && newMode !== "ptt") {
+      recIndicator.classList.add("hidden");
+    }
+
+    mode = newMode;
     modeSelector
       .querySelectorAll(".mode-btn")
       .forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     pttConfig.classList.toggle("hidden", mode !== "ptt");
+    toggle.classList.toggle("hidden", mode === "ptt");
+
+    // If entering PTT with a shortcut, auto-start
+    if (mode === "ptt" && pttShortcut && !listening) {
+      await startSession();
+    } else if (mode === "ptt" && !pttShortcut) {
+      statusEl.textContent = "Set a PTT shortcut first";
+    }
   });
 });
 
@@ -114,7 +143,7 @@ captureBtn.addEventListener("click", () => {
   captureBtn.disabled = true;
 });
 
-window.addEventListener("keydown", (e) => {
+window.addEventListener("keydown", async (e) => {
   if (!isCapturingShortcut) return;
   e.preventDefault();
 
@@ -130,12 +159,30 @@ window.addEventListener("keydown", (e) => {
 
   if (parts.length >= 2) {
     const shortcutStr = parts.join("+");
-    pttShortcut = shortcutStr;
-    shortcutDisplay.textContent = shortcutStr;
-    shortcutDisplay.classList.remove("capturing");
-    isCapturingShortcut = false;
-    captureBtn.disabled = false;
-    void invoke("register_ptt_shortcut", { shortcutStr });
+    try {
+      await invoke("register_ptt_shortcut", { shortcutStr });
+      pttShortcut = shortcutStr;
+      shortcutDisplay.textContent = shortcutStr;
+      shortcutDisplay.classList.remove("capturing");
+      isCapturingShortcut = false;
+      captureBtn.disabled = false;
+      captureBtn.setAttribute("data-shortcut-registered", "true");
+
+      // Auto-start if already in PTT mode
+      if (mode === "ptt" && !listening) {
+        await startSession();
+      }
+    } catch (err) {
+      shortcutDisplay.textContent = `Error: ${err}`;
+      shortcutDisplay.classList.remove("capturing");
+      isCapturingShortcut = false;
+      captureBtn.disabled = false;
+      setTimeout(() => {
+        if (shortcutDisplay.textContent?.startsWith("Error:")) {
+          shortcutDisplay.textContent = "Not set";
+        }
+      }, 4000);
+    }
   }
 });
 
@@ -162,9 +209,10 @@ async function loadDevices(): Promise<void> {
 function setToggle(active: boolean): void {
   const icon = toggle.querySelector<HTMLSpanElement>(".toggle-icon")!;
   const label = toggle.querySelector<HTMLSpanElement>(".toggle-label")!;
+  // Disable mode buttons only in VAD mode; PTT mode buttons stay enabled for switching
   modeSelector
     .querySelectorAll<HTMLButtonElement>(".mode-btn")
-    .forEach((b) => (b.disabled = active));
+    .forEach((b) => (b.disabled = active && mode === "vad"));
 
   if (active) {
     icon.textContent = "■";
@@ -182,35 +230,56 @@ function setToggle(active: boolean): void {
   }
 }
 
-// ── Start / stop ──────────────────────────────────────────────────────────────
+// ── Shared session helpers ─────────────────────────────────────────────────────
 
-toggle.addEventListener("click", async () => {
+async function startSession(): Promise<void> {
   toggle.disabled = true;
   try {
-    if (!listening) {
-      if (mode === "ptt" && !pttShortcut) {
-        statusEl.textContent = "Set a PTT shortcut first";
-        return;
-      }
-      const cmd =
-        mode === "ptt" ? "start_live_translation_ptt" : "start_live_translation";
-      await invoke(cmd, {
-        deviceName: inputSelect.value,
-        outputDeviceName: outputSelect.value,
-      });
-      listening = true;
-      setToggle(true);
-      if (overlayEnabled()) void (await overlay())?.show();
-    } else {
-      await invoke("stop_live_translation");
-      listening = false;
-      setToggle(false);
-      void (await overlay())?.hide();
-    }
+    const cmd =
+      mode === "ptt" ? "start_live_translation_ptt" : "start_live_translation";
+    await invoke(cmd, {
+      deviceName: inputSelect.value,
+      outputDeviceName: outputSelect.value,
+    });
+    listening = true;
+    setToggle(true);
+    if (overlayEnabled()) void (await overlay())?.show();
   } catch (err) {
     statusEl.textContent = `Error: ${err}`;
   } finally {
     toggle.disabled = false;
+  }
+}
+
+async function stopSession(): Promise<void> {
+  toggle.disabled = true;
+  try {
+    await invoke("stop_live_translation");
+    listening = false;
+    setToggle(false);
+    void (await overlay())?.hide();
+  } catch (err) {
+    statusEl.textContent = `Error: ${err}`;
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
+// ── Start / stop ──────────────────────────────────────────────────────────────
+
+toggle.addEventListener("click", async () => {
+  if (!listening) {
+    await startSession();
+  } else {
+    await stopSession();
+  }
+});
+
+// ── Window close cleanup ───────────────────────────────────────────────────────
+
+window.addEventListener("beforeunload", () => {
+  if (listening) {
+    stopSession();
   }
 });
 
