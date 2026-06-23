@@ -268,7 +268,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, _event| {
+                .with_handler(|app, _shortcut, event| {
+                    // Toggle only on key-down. The plugin also fires on key-up, and
+                    // toggling twice per press would cancel the recording instantly,
+                    // so a tap would record only a few milliseconds and get discarded.
+                    if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
                     let s = app.state::<AppState>();
                     let was = s.ptt_recording.fetch_xor(true, std::sync::atomic::Ordering::SeqCst);
                     let _ = app.emit("ptt-state", !was);
@@ -294,7 +300,9 @@ pub fn run() {
                         let src = resource_dir.join("python");
                         let dst = data_dir.join("python");
                         if src.exists() {
-                            let _ = copy_dir_all(&src, &dst);
+                            if let Err(e) = copy_dir_all(&src, &dst) {
+                                eprintln!("[LiveTranslate] failed to copy Python source from resources: {e}");
+                            }
                         }
                     }
                 }
