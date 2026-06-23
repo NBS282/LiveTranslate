@@ -138,39 +138,6 @@ button {
   align-items: center;
 }
 
-/* ── Check list (setup) ── */
-.check-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.check-item {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.7rem 0.875rem;
-  background: var(--bg);
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
-.check-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  border: 2px solid var(--border);
-  transition: all 0.2s;
-}
-.check-icon[data-state="ok"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent);
-}
-
 /* ── Progress ── */
 .progress-section { display: flex; flex-direction: column; gap: 0.5rem; }
 
