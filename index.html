@@ -41,67 +41,62 @@
           <div class="step-dot"></div>
           <div class="step-line"></div>
           <div class="step-dot"></div>
+          <div class="step-line"></div>
+          <div class="step-dot"></div>
         </div>
 
-        <!-- Step 1 -->
+        <!-- Step 1: VB-Cable -->
         <div id="ob-step-1" class="ob-step">
           <div>
-            <h2>Virtual audio cable</h2>
-            <p class="muted">Routes translated audio so Zoom or Discord hears it as a microphone.</p>
+            <h2>Cable de audio virtual</h2>
+            <p class="muted">Necesitás VB-Cable para que Zoom o Discord escuchen el audio traducido como si fuera un micrófono.</p>
           </div>
-
           <div id="ob-cable-status" class="status-badge">
             <span class="badge-dot"></span>
-            <span class="badge-text">Checking…</span>
+            <span class="badge-text">Verificando…</span>
           </div>
-
           <div class="btn-row">
-            <button id="btn-ob-cable-check" class="btn-secondary">Re-check</button>
-            <button id="ob-cable-install" class="btn-link hidden">Download VB-Cable →</button>
-            <button id="btn-ob-next-1" class="btn-primary hidden">Continue →</button>
+            <button id="btn-ob-cable-check" class="btn-secondary">Re-verificar</button>
+            <button id="ob-cable-install" class="btn-link hidden">Descargar VB-Cable →</button>
+            <button id="btn-ob-next-1" class="btn-primary hidden">Continuar →</button>
           </div>
         </div>
 
-        <!-- Step 2 -->
+        <!-- Step 2: Connect the audio -->
         <div id="ob-step-2" class="ob-step hidden">
           <div>
-            <h2>Voice model</h2>
-            <p class="muted">Converts translated text to speech (~60 MB).</p>
+            <h2>Conectá el audio</h2>
+            <p class="muted">Así viaja tu voz traducida hasta la videollamada:</p>
           </div>
-
-          <div id="ob-piper-status" class="status-badge">
-            <span class="badge-dot"></span>
-            <span class="badge-text">Checking…</span>
+          <div class="audio-diagram">
+            <div class="audio-row"><span>Tu micrófono</span><span class="arrow">→</span><span>LiveTranslate</span></div>
+            <div class="audio-row"><span>LiveTranslate</span><span class="arrow">→</span><span><em>CABLE Input</em> (elegilo como Output acá)</span></div>
+            <div class="audio-row"><span><em>CABLE Output</em></span><span class="arrow">→</span><span>micrófono en Discord / Zoom / Teams</span></div>
           </div>
-
-          <div id="ob-piper-progress" class="progress-section hidden">
-            <div class="progress-header">
-              <span id="ob-piper-step">Downloading…</span>
-              <span id="ob-piper-pct">0%</span>
-            </div>
-            <div class="progress-track">
-              <div id="ob-piper-fill" class="progress-fill" style="width:0%"></div>
-            </div>
-          </div>
-
-          <div class="btn-row">
-            <button id="btn-ob-dl-piper" class="btn-primary hidden">Download voice model</button>
-            <button id="btn-ob-next-2" class="btn-primary hidden">Continue →</button>
-          </div>
+          <button id="btn-ob-next-2" class="btn-primary btn-full">Continuar →</button>
         </div>
 
-        <!-- Step 3 -->
+        <!-- Step 3: Shortcuts -->
         <div id="ob-step-3" class="ob-step hidden">
           <div>
-            <h2>Configure your video call app</h2>
-            <p class="muted">In <strong>Zoom, Discord or Teams</strong>:</p>
+            <h2>Atajos de teclado</h2>
+            <p class="muted">Para el modo Push-to-talk podés definir un atajo:</p>
           </div>
-          <ol class="instructions">
-            <li>Open <strong>Audio Settings</strong></li>
-            <li>Set <strong>Microphone</strong> → <em>CABLE Output (VB-Audio Virtual Cable)</em></li>
-            <li>Speak Spanish — LiveTranslate sends English audio through the cable</li>
-          </ol>
-          <button id="btn-ob-finish" class="btn-primary btn-full">Start using LiveTranslate →</button>
+          <ul class="instructions">
+            <li>Es un <strong>combo de 2 o más teclas</strong> (por ejemplo <em>Ctrl + Shift + Espacio</em>).</li>
+            <li>Lo apretás para <strong>empezar y frenar</strong> la grabación.</li>
+            <li>Funciona mientras <strong>LiveTranslate esté abierto</strong>, aunque la ventana no esté en foco.</li>
+          </ul>
+          <button id="btn-ob-next-3" class="btn-primary btn-full">Continuar →</button>
+        </div>
+
+        <!-- Step 4: Done -->
+        <div id="ob-step-4" class="ob-step hidden">
+          <div>
+            <h2>¡Todo listo!</h2>
+            <p class="muted">Ya podés empezar a traducir en tus llamadas.</p>
+          </div>
+          <button id="btn-ob-finish" class="btn-primary btn-full">Empezar a usar LiveTranslate →</button>
         </div>
       </div>
     </div>

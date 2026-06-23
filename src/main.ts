@@ -46,7 +46,7 @@ function setStatusBadge(id: string, state: "ok" | "err" | "idle", text: string):
   if (badge) badge.textContent = text;
 }
 
-function setStepDot(active: 1 | 2 | 3): void {
+function setStepDot(active: 1 | 2 | 3 | 4): void {
   document.querySelectorAll<HTMLElement>(".step-dot").forEach((dot, i) => {
     dot.classList.remove("active", "done");
     const n = i + 1;
@@ -126,16 +126,16 @@ const btnRecheck = document.getElementById("btn-ob-cable-check") as HTMLButtonEl
 
 async function checkVBCable(): Promise<void> {
   btnRecheck.disabled = true;
-  btnRecheck.textContent = "Checking…";
+  btnRecheck.textContent = "Verificando…";
 
   try {
     const found = await invoke<boolean>("check_vbcable");
     if (found) {
-      setStatusBadge("ob-cable-status", "ok", "VB-Cable detected");
+      setStatusBadge("ob-cable-status", "ok", "VB-Cable detectado");
       document.getElementById("ob-cable-install")!.classList.add("hidden");
       document.getElementById("btn-ob-next-1")!.classList.remove("hidden");
     } else {
-      setStatusBadge("ob-cable-status", "err", "Not found — install VB-Cable then click Re-check");
+      setStatusBadge("ob-cable-status", "err", "No encontrado — instalá VB-Cable y volvé a verificar");
       document.getElementById("ob-cable-install")!.classList.remove("hidden");
       document.getElementById("btn-ob-next-1")!.classList.add("hidden");
     }
@@ -143,7 +143,7 @@ async function checkVBCable(): Promise<void> {
     setStatusBadge("ob-cable-status", "err", `Check failed: ${err}`);
   } finally {
     btnRecheck.disabled = false;
-    btnRecheck.textContent = "Re-check";
+    btnRecheck.textContent = "Re-verificar";
   }
 }
 
@@ -157,58 +157,9 @@ document.getElementById("btn-ob-next-1")!.addEventListener("click", () => {
   document.getElementById("ob-step-1")!.classList.add("hidden");
   document.getElementById("ob-step-2")!.classList.remove("hidden");
   setStepDot(2);
-  void checkPiper();
 });
 
-// ── Onboarding step 2: Piper voice ───────────────────────────────────────────
-
-async function checkPiper(): Promise<void> {
-  try {
-    const st = await invoke<{ venv_ok: boolean; piper_voice_ok: boolean; ready: boolean }>(
-      "check_setup",
-    );
-    if (st.piper_voice_ok) {
-      setStatusBadge("ob-piper-status", "ok", "Voice model ready");
-      document.getElementById("btn-ob-dl-piper")!.classList.add("hidden");
-      document.getElementById("btn-ob-next-2")!.classList.remove("hidden");
-    } else {
-      setStatusBadge("ob-piper-status", "idle", "Not downloaded yet");
-      (document.getElementById("btn-ob-dl-piper") as HTMLButtonElement).disabled = false;
-      document.getElementById("btn-ob-dl-piper")!.classList.remove("hidden");
-      document.getElementById("btn-ob-next-2")!.classList.add("hidden");
-    }
-  } catch (err) {
-    setStatusBadge("ob-piper-status", "err", `Check failed: ${err}`);
-  }
-}
-
-const btnDlPiper = document.getElementById("btn-ob-dl-piper") as HTMLButtonElement;
-
-btnDlPiper.addEventListener("click", async () => {
-  btnDlPiper.disabled = true;
-  btnDlPiper.textContent = "Downloading…";
-  document.getElementById("ob-piper-progress")!.classList.remove("hidden");
-
-  const unlisten = await listen<{ step: string; percent: number; detail: string }>(
-    "setup-progress",
-    (e) => {
-      setProgress("ob-piper-fill", "ob-piper-pct", "ob-piper-step", e.payload.percent, e.payload.step);
-    },
-  );
-
-  try {
-    await invoke("download_piper_voice");
-    setStatusBadge("ob-piper-status", "ok", "Voice model ready");
-    document.getElementById("btn-ob-next-2")!.classList.remove("hidden");
-    btnDlPiper.classList.add("hidden");
-  } catch (err) {
-    setStatusBadge("ob-piper-status", "err", `Download failed: ${err}`);
-    btnDlPiper.disabled = false;
-    btnDlPiper.textContent = "Retry";
-  } finally {
-    unlisten();
-  }
-});
+// ── Onboarding step 2: connect audio ─────────────────────────────────────────
 
 document.getElementById("btn-ob-next-2")!.addEventListener("click", () => {
   document.getElementById("ob-step-2")!.classList.add("hidden");
@@ -216,7 +167,15 @@ document.getElementById("btn-ob-next-2")!.addEventListener("click", () => {
   setStepDot(3);
 });
 
-// ── Onboarding step 3 ────────────────────────────────────────────────────────
+// ── Onboarding step 3: shortcuts ─────────────────────────────────────────────
+
+document.getElementById("btn-ob-next-3")!.addEventListener("click", () => {
+  document.getElementById("ob-step-3")!.classList.add("hidden");
+  document.getElementById("ob-step-4")!.classList.remove("hidden");
+  setStepDot(4);
+});
+
+// ── Onboarding step 4: finish ────────────────────────────────────────────────
 
 document.getElementById("btn-ob-finish")!.addEventListener("click", () => {
   show("screen-main");
@@ -232,20 +191,13 @@ document.getElementById("btn-reopen-onboarding")!.addEventListener("click", () =
   document.getElementById("ob-step-1")!.classList.remove("hidden");
   document.getElementById("ob-step-2")!.classList.add("hidden");
   document.getElementById("ob-step-3")!.classList.add("hidden");
+  document.getElementById("ob-step-4")!.classList.add("hidden");
 
   document.getElementById("btn-ob-next-1")!.classList.add("hidden");
   document.getElementById("ob-cable-install")!.classList.add("hidden");
-  document.getElementById("ob-piper-progress")!.classList.add("hidden");
-  document.getElementById("btn-ob-next-2")!.classList.add("hidden");
-  btnDlPiper.classList.remove("hidden");
-  btnDlPiper.disabled = false;
-  btnDlPiper.textContent = "Download voice model";
 
-  setStatusBadge("ob-cable-status", "idle", "Checking…");
-  setStatusBadge("ob-piper-status", "idle", "Checking…");
-
+  setStatusBadge("ob-cable-status", "idle", "Verificando…");
   void checkVBCable();
-  void checkPiper();
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
