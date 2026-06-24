@@ -80,8 +80,8 @@ LiveTranslate/
 ├── python/                 # Python translation engine
 │   └── lt_engine/
 │       ├── pipeline.py    # ASR → MT → TTS pipeline
-│       ├── server.py      # FastAPI server
-│       └── server.py      # FastAPI server
+│       ├── server.py      # FastAPI HTTP server
+│       └── __main__.py    # Entry point (python -m lt_engine)
 ├── overlay.html           # Subtitle overlay entry point
 └── index.html             # Main window entry point
 ```

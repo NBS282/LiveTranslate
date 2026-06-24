@@ -137,31 +137,38 @@ For detailed instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────┐
-│               Tauri Desktop App               │
-│  ┌──────────┐  ┌──────────┐  ┌─────────────┐ │
-│  │  Main    │  │  Overlay │  │ System Tray │ │
-│  │  Window  │  │  Window  │  │    Icon     │ │
-│  └────┬─────┘  └──────────┘  └─────────────┘ │
-│       │                                        │
-│  ┌────▼─────────────────────────────────────┐ │
-│  │         Rust Backend (src-tauri/src/)    │ │
-│  │  ┌────────┐  ┌──────────┐  ┌─────────┐  │ │
-│  │  │ Setup  │  │  Audio   │  │ Engine  │  │ │
-│  │  │ Wizard │  │ Capture  │  │ Manager │  │ │
-│  │  └────────┘  └──────────┘  └────┬────┘  │ │
-│  └──────────────────────────────────┼───────┘ │
-└─────────────────────────────────────┼─────────┘
-                                      │
-                         ┌────────────▼────────────┐
-                         │  Python Engine Server    │
-                         │  (FastAPI, localhost)     │
-                         │  ┌──────────────────────┐│
-                         │  │  pipeline.py          ││
-                         │  │  ASR → MT → TTS      ││
-                         │  └──────────────────────┘│
-                         └─────────────────────────┘
+```mermaid
+graph TD
+    subgraph app["Tauri Desktop App"]
+        subgraph frontend["Frontend — TypeScript + Vite"]
+            MW["Main Window"]
+            OW["Subtitle Overlay\nalways-on-top · click-through"]
+        end
+        subgraph rust["Backend — Rust"]
+            AUDIO["Audio Capture\nWASAPI Loopback"]
+            SETUP["Setup Wizard"]
+            ENGINE_MGR["Engine Manager"]
+            CMDS["Tauri Commands & Events"]
+        end
+    end
+
+    subgraph engine["AI Engine — Python + FastAPI"]
+        ASR["Speech Recognition\nParakeet-TDT / Whisper"]
+        MT["Translation\nOpus-MT"]
+        TTS["Text-to-Speech\nPiper"]
+    end
+
+    MIC["🎙️ Microphone"] --> AUDIO
+    SYSAUDIO["🔊 System Audio"] --> AUDIO
+    AUDIO --> CMDS
+    CMDS <-->|"Tauri events"| MW
+    ENGINE_MGR -->|"spawns process"| engine
+    CMDS -->|"HTTP — localhost"| ASR
+    ASR -->|"transcript"| MT
+    MT -->|"subtitle text"| OW
+    MT --> TTS
+    TTS -->|"audio playback"| MW
+    SETUP -->|"first run only"| HF["HuggingFace Hub\nmodels downloaded once"]
 ```
 
 ### Tech Stack
