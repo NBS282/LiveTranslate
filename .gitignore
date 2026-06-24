@@ -74,3 +74,10 @@ tts_test.*
 
 # ── Tauri generated schemas ──
 src-tauri/gen/
+
+# ── Internal planning / SDD artifacts (not source code) ──
+docs/
+openspec/
+sdd/
+.vscode/
+apps.txt
