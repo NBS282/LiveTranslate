@@ -8,7 +8,7 @@
 <h1 align="center">LiveTranslate</h1>
 
 <p align="center">
-  <strong>Real-time speech translation with transparent on-screen subtitles.</strong><br>
+  <strong>Speak in one language, be heard in another — in real time.</strong><br>
   100% local. No cloud. No API keys. No data leaves your machine.
 </p>
 
@@ -31,26 +31,37 @@
 
 ## What is LiveTranslate?
 
-LiveTranslate captures audio from your microphone or system speakers, transcribes it with local AI, translates it into your target language, and shows the result as a transparent overlay on your screen — all in real time.
+LiveTranslate captures audio from your microphone, transcribes it with a local AI model, and translates it in real time. The translation can be shown as an on-screen subtitle overlay and/or spoken aloud by a text-to-speech engine.
 
-Think subtitle glasses for real life: meetings, video calls, movies, live streams, face-to-face conversations.
+The main use case is **live video calls**: you speak in your language, LiveTranslate translates and plays the audio through a virtual audio cable, and the other person on Zoom, Teams, or Meet hears you in their language — with no interpreter and no cloud service involved.
 
 ### How it works
 
-1. **Capture** — audio is read from your microphone or any system audio source (Zoom, YouTube, games) via WASAPI loopback.
-2. **Transcribe** — [Parakeet-TDT](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) converts the spoken audio into text (~0.5 s per phrase on GPU).
-3. **Translate** — [Opus-MT](https://huggingface.co/Helsinki-NLP/opus-mt-es-en) translates the text into your target language (~1–2 s on CPU).
-4. **Display** — the translation appears as a transparent subtitle overlay that floats above all windows. Optionally, [Piper TTS](https://github.com/rhasspy/piper) reads it aloud.
+1. **Capture** — your microphone audio is captured directly by LiveTranslate.
+2. **Transcribe** — [Parakeet-TDT](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) converts speech to text (~0.5 s per phrase on GPU).
+3. **Translate** — [Opus-MT](https://huggingface.co/Helsinki-NLP/opus-mt-es-en) translates the text into the target language (~1–2 s on CPU).
+4. **Output** — two things happen simultaneously:
+   - A transparent subtitle overlay shows the translation on screen.
+   - [Piper TTS](https://github.com/rhasspy/piper) speaks the translation aloud through a **virtual audio cable** — set that cable as your microphone in the video call app and the other person hears the translated voice.
 
 ```mermaid
 flowchart LR
-    A["🎙️ Mic / System Audio"] --> B["Parakeet-TDT\nSpeech → Text"]
+    A["🎙️ Microphone"] --> B["Parakeet-TDT\nSpeech → Text"]
     B --> C["Opus-MT\nText → Text"]
     C --> D["📺 Subtitle Overlay"]
-    C --> E["🔊 Piper TTS\noptional"]
+    C --> E["Piper TTS\nText → Speech"]
+    E --> F["🔌 Virtual Cable\n→ Zoom / Teams / Meet"]
 ```
 
 Everything runs locally on your machine. No audio or text is ever sent to the cloud.
+
+### Virtual audio cable
+
+To route the translated audio into a video call, you need a virtual audio cable driver:
+
+- **[VB-Audio Virtual Cable](https://vb-audio.com/Cable/)** (free) — install it, then in your video call app select "CABLE Input" as the microphone.
+
+Without the virtual cable, LiveTranslate still works — you see the subtitles and hear the translation through your speakers, but the other party on the call won't hear the translated audio.
 
 ---
 
@@ -101,8 +112,9 @@ Grab the latest `LiveTranslate_x64-setup.exe` from the [Releases page](https://g
 **Requirements:**
 - Windows 10 or 11 (64-bit)
 - ~4 GB free disk space (for Python runtime + models)
-- Internet connection on first run (models download once)
+- Internet connection on first run (models download once, then fully offline)
 - GPU with CUDA recommended but not required
+- [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free) — required to route translated audio into video calls
 
 ---
 
@@ -192,6 +204,7 @@ LiveTranslate is in active development. Current focus areas:
 - [ ] Language selection UI
 - [ ] Linux / macOS support
 - [ ] Built-in model download manager
+- [ ] Live keyboard output — type the translation as if you were physically typing it, so it appears in any text field on screen (chat, forms, live captions)
 
 ---
 
