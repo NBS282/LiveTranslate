@@ -1,1 +1,233 @@
-# LiveTranslate
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="src-tauri/icons/icon.png">
+    <img src="src-tauri/icons/icon.png" width="128" alt="LiveTranslate icon — ES/EN gradient">
+  </picture>
+</p>
+
+<h1 align="center">LiveTranslate</h1>
+
+<p align="center">
+  <strong>Real-time speech translation with transparent on-screen subtitles.</strong><br>
+  100% local. No cloud. No API keys. No data leaves your machine.
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#building-from-source">Build from Source</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#contributing">Contributing</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License">
+  <img src="https://img.shields.io/badge/Windows-10%2B%20|%2011-brightgreen" alt="Windows">
+  <img src="https://img.shields.io/badge/Rust-♥-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/Python-3.12-blue" alt="Python 3.12">
+</p>
+
+---
+
+## What is LiveTranslate?
+
+LiveTranslate captures audio from your microphone or system speakers, transcribes it with local AI, translates it into your target language, and shows the result as a transparent overlay on your screen — all in real time.
+
+Think subtitle glasses for real life: meetings, video calls, movies, live streams, face-to-face conversations.
+
+### How it works
+
+```
+Microphone / System Audio
+        │
+        ▼
+┌─────────────────┐
+│   ASR (Whisper)  │  Speech → Text  (source language)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Translation   │  Text → Text  (target language)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐      ┌──────────────────┐
+│  Subtitle       │  or  │ TTS (Piper)       │
+│  Overlay        │      │ Audio playback    │
+└─────────────────┘      └──────────────────┘
+```
+
+---
+
+## Features
+
+### Real-time transcription & translation
+
+- **Microphone mode** — translate your own speech into another language
+- **System audio mode** — capture audio from any app (Zoom, Teams, YouTube, Netflix, games)
+- **Push-to-talk** — hold a hotkey to translate, release to stop
+- **On-screen subtitles** — transparent overlay sits above all windows, click-through, auto-hides
+- **Audio playback (TTS)** — hear the translation spoken aloud (Piper voices)
+
+### 100% local & private
+
+- All inference runs on your machine
+- No cloud services, no API keys, no telemetry
+- HuggingFace models downloaded once during setup
+- Works completely offline after initial model download
+
+### Self-contained setup
+
+- One-click installer bundles a portable Python runtime
+- Setup downloads and configures everything: Python, models, voices
+- No manual Python installation, no `pip install`, no environment variables
+- Survives app reinstalls (models cached in HuggingFace home directory)
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Shift+L` | Toggle listening |
+| `Ctrl+Shift+F` | Toggle fullscreen subtitle overlay |
+| Hold `CapsLock` | Push-to-talk (transcribe while held, translate on release) |
+
+---
+
+## Quick Start
+
+### Download the installer
+
+Grab the latest `LiveTranslate_x64-setup.exe` from the [Releases page](https://github.com/NBS282/LiveTranslate/releases).
+
+1. Run the installer
+2. Launch LiveTranslate — the setup wizard will download Python and models automatically
+3. Select your microphone or system audio device
+4. Choose source and target languages
+5. Start speaking — subtitles appear on screen
+
+**Requirements:**
+- Windows 10 or 11 (64-bit)
+- ~4 GB free disk space (for Python runtime + models)
+- Internet connection on first run (models download once)
+- GPU with CUDA recommended but not required
+
+---
+
+## Building from Source
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (latest stable)
+- [Node.js](https://nodejs.org/) 18+
+- [pnpm](https://pnpm.io/)
+- [Tauri CLI](https://v2.tauri.app/start/cli/)
+
+### Steps
+
+```bash
+git clone https://github.com/NBS282/LiveTranslate.git
+cd LiveTranslate
+
+pnpm install
+pnpm tauri dev      # development mode with hot-reload
+pnpm tauri build    # production build
+```
+
+For detailed instructions, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│               Tauri Desktop App               │
+│  ┌──────────┐  ┌──────────┐  ┌─────────────┐ │
+│  │  Main    │  │  Overlay │  │ System Tray │ │
+│  │  Window  │  │  Window  │  │    Icon     │ │
+│  └────┬─────┘  └──────────┘  └─────────────┘ │
+│       │                                        │
+│  ┌────▼─────────────────────────────────────┐ │
+│  │         Rust Backend (src-tauri/src/)    │ │
+│  │  ┌────────┐  ┌──────────┐  ┌─────────┐  │ │
+│  │  │ Setup  │  │  Audio   │  │ Engine  │  │ │
+│  │  │ Wizard │  │ Capture  │  │ Manager │  │ │
+│  │  └────────┘  └──────────┘  └────┬────┘  │ │
+│  └──────────────────────────────────┼───────┘ │
+└─────────────────────────────────────┼─────────┘
+                                      │
+                         ┌────────────▼────────────┐
+                         │  Python Engine Server    │
+                         │  (FastAPI, localhost)     │
+                         │  ┌──────────────────────┐│
+                         │  │  pipeline.py          ││
+                         │  │  ASR → MT → TTS      ││
+                         │  └──────────────────────┘│
+                         └─────────────────────────┘
+```
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Vanilla TypeScript, Vite |
+| Desktop shell | Tauri 2 (Rust) |
+| Audio capture | WASAPI loopback (Windows) |
+| Speech recognition | Parakeet-TDT (NVIDIA NeMo) / Whisper |
+| Translation | Opus-MT (HuggingFace) |
+| Text-to-speech | Piper TTS |
+| Engine server | FastAPI (Python 3.12) |
+
+---
+
+## Project Status
+
+LiveTranslate is in active development. Current focus areas:
+
+- [x] Windows installer (MSI + NSIS)
+- [x] Spanish → English translation pipeline
+- [x] Transparent subtitle overlay
+- [x] Push-to-talk
+- [ ] Multilingual support (NLLB-200 swap)
+- [ ] Language selection UI
+- [ ] Linux / macOS support
+- [ ] Built-in model download manager
+
+---
+
+## FAQ
+
+**Does it work offline?**
+Yes. After the first setup downloads the models, everything runs locally with no internet connection required.
+
+**Does it require a GPU?**
+No. It runs on CPU, but GPU acceleration (CUDA) significantly improves performance.
+
+**What languages are supported?**
+Currently Spanish → English. We're working on NLLB-200 for 200-language support in any direction.
+
+**Is my data private?**
+100%. Everything runs on your machine. No audio, text, or any data ever leaves your computer.
+
+**Does it work with any app?**
+Yes — system audio mode captures audio from any application (Zoom, Teams, Discord, YouTube, Netflix, games).
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup and guidelines.
+
+**Quick summary:**
+1. Fork and clone
+2. `pnpm install`
+3. Make your changes
+4. Submit a PR with conventional commits
+
+All contributions welcome — bug fixes, features, docs, tests.
+
+---
+
+## License
+
+MIT © 2026 Nicolás B. S. — see [LICENSE](LICENSE) for details.

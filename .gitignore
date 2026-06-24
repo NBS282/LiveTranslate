@@ -41,25 +41,36 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Models (large binaries — never commit)
+# ── AI / ML models (large binaries — never commit) ──
 *.safetensors
 *.gguf
 *.bin
 models/
 
-# Hibiki-Zero python sidecar env + translation outputs
-.venv-hibiki/
+# ── Runtime engine artifacts ──
+engine/
+voices/
+python-portable.tar.gz
 translations/
 
-# Piper voices + spike/test outputs
-*.onnx
-*.onnx.json
-python/_out/
-spike_out.wav
-tts_test.wav
-
-# Python bytecode
+# ── Python ──
+.venv/
+.venv-hibiki/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+*.whl
+*.egg-info/
+*.egg
+
+# ── Piper voices + spike/test outputs ──
+*.onnx
+*.onnx.json
+python/_out/
+spike_out.*
+tts_test.*
+
+# ── Tauri generated schemas ──
+src-tauri/gen/
