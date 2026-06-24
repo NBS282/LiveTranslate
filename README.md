@@ -83,13 +83,11 @@ Microphone / System Audio
 - No manual Python installation, no `pip install`, no environment variables
 - Survives app reinstalls (models cached in HuggingFace home directory)
 
-### Keyboard shortcuts
+### Push-to-talk (PTT) shortcut
 
-| Shortcut | Action |
-|---|---|
-| `Ctrl+Shift+L` | Toggle listening |
-| `Ctrl+Shift+F` | Toggle fullscreen subtitle overlay |
-| Hold `CapsLock` | Push-to-talk (transcribe while held, translate on release) |
+The PTT shortcut is **user-configurable** — click the "Capture" button in settings and press any key combination (e.g. `CapsLock`, `Ctrl+Shift+Space`, `Ctrl+\`). No shortcuts are hardcoded.
+
+In PTT mode: hold the shortcut to record, release to stop and translate.
 
 ---
 
