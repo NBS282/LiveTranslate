@@ -42,19 +42,43 @@ function streamText(text: string): void {
   cancelStream();
   tgtChars.textContent = "";
 
+  // Split into tokens (each word plus its trailing whitespace) so spacing is
+  // preserved and we can highlight one word at a time.
+  const tokens = text.match(/\S+\s*/g) ?? [];
+
+  // Pre-create a span per word; we reveal them char by char below.
+  const wordSpans = tokens.map(() => {
+    const span = document.createElement("span");
+    span.className = "word";
+    tgtChars.appendChild(span);
+    return span;
+  });
+
+  // Blinking cursor that rides at the typing edge.
   const cursor = document.createElement("span");
   cursor.className = "cursor";
-  tgtChars.appendChild(cursor);
 
-  let i = 0;
+  let w = 0; // current word index
+  let c = 0; // char index within the current token
   function tick(): void {
-    if (i >= text.length) {
+    if (w >= tokens.length) {
+      // Done — settle everything to the resting (white) color, drop the cursor.
+      wordSpans.forEach((s) => s.classList.remove("active"));
       cursor.remove();
       return;
     }
-    // Insert the next character before the cursor
-    cursor.insertAdjacentText("beforebegin", text[i]!);
-    i++;
+    const token = tokens[w]!;
+    const span = wordSpans[w]!;
+    // The word currently being typed glows yellow; finished words are white.
+    span.classList.add("active");
+    span.textContent = token.slice(0, c + 1);
+    span.after(cursor); // keep the cursor right after the active word
+    c++;
+    if (c >= token.length) {
+      span.classList.remove("active");
+      w++;
+      c = 0;
+    }
     streamTimer = setTimeout(tick, 26);
   }
   tick();

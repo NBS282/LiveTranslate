@@ -339,6 +339,44 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
 
     let python = venv_python();
 
+    // ── Step 1.5 (Windows): ensure VC++ 2015-2022 x64 runtime is present ─────
+    // PyTorch DLLs (c10.dll, torch_cpu.dll, …) link against msvcp140.dll and
+    // vcruntime140.dll. On a fresh Windows install those are missing. We detect
+    // the absence and silently install the official redistributable before pip
+    // installs PyTorch so the import never fails with WinError 126.
+    #[cfg(windows)]
+    if !std::path::Path::new("C:\\Windows\\System32\\msvcp140.dll").exists() {
+        emit_progress(
+            app,
+            "Installing Visual C++ Runtime",
+            12,
+            "Required by PyTorch — ~25 MB, one-time install…",
+        );
+        let tmp = std::env::temp_dir().join("vc_redist_lt_x64.exe");
+        download_file(
+            app,
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe",
+            &tmp,
+            "Installing Visual C++ Runtime",
+        )?;
+        let mut cmd = std::process::Command::new(&tmp);
+        // /install /quiet /norestart: silently elevate + install, no reboot.
+        cmd.args(["/install", "/quiet", "/norestart"]);
+        let out = cmd
+            .output()
+            .map_err(|e| format!("failed to run vc_redist: {e}"))?;
+        let _ = std::fs::remove_file(&tmp);
+        let code = out.status.code().unwrap_or(-1);
+        // 0=ok  3010=ok(restart advised)  1638=already installed
+        if code != 0 && code != 3010 && code != 1638 {
+            return Err(format!(
+                "Visual C++ Runtime installation failed (code {code}).\n\
+                 Please install it manually and retry:\n\
+                 https://aka.ms/vs/17/release/vc_redist.x64.exe"
+            ));
+        }
+    }
+
     // ── Step 2: install PyTorch (CPU) ─────────────────────────────────────────
     emit_progress(
         app,
@@ -387,7 +425,66 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
-    // ── Step 5: ensure lt_engine source is available ──────────────────────────
+    // ── Step 5: pre-cache ML models (NeMo ASR + MarianMT) ────────────────────
+    // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
+    // app data and are never re-downloaded on subsequent launches.
+    let hf_cache = crate::translation::sidecar::repo_root()
+        .join("models")
+        .join("hf");
+    let _ = std::fs::create_dir_all(&hf_cache);
+    let hf_cache_str = hf_cache.to_string_lossy().into_owned();
+
+    emit_progress(
+        app,
+        "Downloading translation models",
+        91,
+        "~1.5 GB — first-time download, please wait…",
+    );
+    let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
+    // Create nemo sub-dir before the script runs so it doesn't hit a permissions
+    // error the first time it tries to write there.
+    let _ = std::fs::create_dir_all(hf_cache.join("nemo"));
+
+    run_python_script(
+        app,
+        &python,
+        r#"
+import sys, os
+
+nemo_dir = os.environ.get("NEMO_CACHE_DIR", "")
+if nemo_dir:
+    os.makedirs(nemo_dir, exist_ok=True)
+
+print("(1/2) Downloading MarianMT ES->EN (~300 MB)...", flush=True)
+try:
+    from transformers import MarianMTModel, MarianTokenizer
+    MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-es-en")
+    MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-es-en")
+    print("MarianMT ready.", flush=True)
+except Exception as e:
+    print(f"ERROR [MarianMT]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+print("(2/2) Downloading Parakeet ASR model (~1.1 GB)...", flush=True)
+try:
+    # Use snapshot_download to cache files without loading the full model into
+    # RAM. NeMo 2.x (HF-backed) will find the cached files on server startup.
+    from huggingface_hub import snapshot_download
+    snapshot_download("nvidia/parakeet-tdt-0.6b-v3")
+    print("Parakeet model files cached.", flush=True)
+except Exception as e:
+    print(f"ERROR [Parakeet]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+"#,
+        91,
+        &[
+            ("HF_HOME", hf_cache_str.as_str()),
+            ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
+            ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
+        ],
+    )?;
+
+    // ── Step 6: ensure lt_engine source is available ──────────────────────────
     // In production, lib.rs copies the bundled python/ from resources to data_dir on
     // every launch, but that copy can fail silently. We verify here so the server can
     // always find the lt_engine package (via PYTHONPATH) after setup finishes.
@@ -479,6 +576,99 @@ fn run_pip(
     let status = child.wait().map_err(|e| e.to_string())?;
     if !status.success() {
         return Err(format!("pip {} failed (exit {:?})", args[0], status.code()));
+    }
+    Ok(())
+}
+
+// ── Python script runner ──────────────────────────────────────────────────────
+
+fn run_python_script(
+    app: &AppHandle,
+    python: &PathBuf,
+    code: &str,
+    pct_start: u8,
+    extra_env: &[(&str, &str)],
+) -> Result<(), String> {
+    use std::io::BufRead;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+
+    let mut cmd = std::process::Command::new(python);
+    // -u: unbuffered so progress lines arrive in real-time on Windows.
+    cmd.args(["-u", "-c", code])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        // Prevent codec crashes on Windows when NeMo/HF print non-ASCII chars.
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+
+    // Capture stderr for the error message AND stream it as progress events.
+    let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let stderr_thread = if let Some(stderr) = child.stderr.take() {
+        let app2 = app.clone();
+        let cap = captured.clone();
+        Some(std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(Result::ok)
+            {
+                emit_progress(&app2, "Downloading models", pct_start, &line);
+                if let Ok(mut v) = cap.lock() {
+                    v.push(line);
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    let stdout_thread = if let Some(stdout) = child.stdout.take() {
+        let app2 = app.clone();
+        Some(std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
+                emit_progress(&app2, "Downloading models", pct_start, &line);
+            }
+        }))
+    } else {
+        None
+    };
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+
+    // Wait for I/O threads to drain before reading captured lines.
+    if let Some(h) = stderr_thread {
+        let _ = h.join();
+    }
+    if let Some(h) = stdout_thread {
+        let _ = h.join();
+    }
+
+    if !status.success() {
+        let lines = captured.lock().map(|v| v.clone()).unwrap_or_default();
+        let n = lines.len();
+        let tail = lines[n.saturating_sub(10)..].join("\n");
+        return Err(if tail.is_empty() {
+            format!("model pre-download failed (exit {:?})", status.code())
+        } else {
+            format!(
+                "model pre-download failed (exit {:?}):\n{tail}",
+                status.code()
+            )
+        });
     }
     Ok(())
 }

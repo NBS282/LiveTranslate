@@ -126,10 +126,38 @@ fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(),
     // Let the frontend know warmup is in progress (models can take 30–90 s to load).
     let _ = app.emit("engine-starting", ());
 
-    translation::engine_server::wait_until_ready(std::time::Duration::from_secs(180))
-        .map_err(|_| {
-            "Translation engine is taking too long to start. Check that setup completed successfully.".to_string()
-        })
+    // Poll /health with process-liveness monitoring so a crashed Python process
+    // fails fast (instead of waiting the full timeout). NeMo loads a 1.1 GB model
+    // into RAM on first start, which can take several minutes on slow disks/CPUs.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/health", translation::engine_server::base_url());
+    while std::time::Instant::now() < deadline {
+        // If the child process has exited, fail immediately.
+        if let Ok(mut guard) = state.server.lock() {
+            if let Some(ref mut child) = *guard {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Err(format!(
+                        "Translation engine exited unexpectedly (code: {}). \
+                         Check setup, logs above, and that no antivirus is blocking it.",
+                        status.code().map(|c| c.to_string()).unwrap_or_else(|| "no code".into())
+                    ));
+                }
+            }
+        }
+
+        if let Ok(resp) = client.get(&url).timeout(std::time::Duration::from_secs(2)).send() {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Err(
+        "Translation engine is taking too long to start. Check that setup completed successfully."
+            .to_string(),
+    )
 }
 
 /// Stops the live session and kills the engine server (and its whole process tree),
@@ -201,6 +229,35 @@ fn check_setup() -> setup::SetupStatus {
 #[tauri::command]
 fn start_setup(app: tauri::AppHandle) {
     setup::run_setup(app);
+}
+
+/// Spawns the engine server in the background (non-blocking) so models load while
+/// the user finishes onboarding. By the time they click "Start", warmup is done.
+/// Safe to call repeatedly: it no-ops if the server is already up or starting.
+#[tauri::command]
+fn warm_engine(state: tauri::State<AppState>) {
+    if translation::engine_server::is_server_up() {
+        return;
+    }
+    if !setup::check().ready {
+        return;
+    }
+    let mut guard = match state.server.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let needs_spawn = match guard.as_mut() {
+        None => true,
+        Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+    };
+    if needs_spawn {
+        match translation::engine_server::spawn_server() {
+            Ok(child) => {
+                *guard = Some(child);
+            }
+            Err(e) => eprintln!("warm_engine: could not spawn server: {e}"),
+        }
+    }
 }
 
 #[tauri::command]
@@ -310,18 +367,21 @@ pub fn run() {
             }
 
             let state = app.state::<AppState>();
-            // Kill any leftover server from a previous run, then spawn fresh.
-            match translation::engine_server::spawn_server() {
-                Ok(child) => { *state.server.lock().unwrap() = Some(child); }
-                Err(e) => { eprintln!("could not spawn translation server: {e}"); }
-            }
-            std::thread::spawn(|| {
-                if let Err(e) = translation::engine_server::wait_until_ready(
-                    std::time::Duration::from_secs(120),
-                ) {
-                    eprintln!("translation server not ready: {e}");
+            // Only pre-warm the server if setup is already complete.
+            // On first run (no Python runtime yet) this would fail and is unnecessary.
+            if setup::check().ready {
+                match translation::engine_server::spawn_server() {
+                    Ok(child) => { *state.server.lock().unwrap() = Some(child); }
+                    Err(e) => { eprintln!("could not spawn translation server: {e}"); }
                 }
-            });
+                std::thread::spawn(|| {
+                    if let Err(e) = translation::engine_server::wait_until_ready(
+                        std::time::Duration::from_secs(120),
+                    ) {
+                        eprintln!("translation server not ready: {e}");
+                    }
+                });
+            }
 
             // ── System tray ────────────────────────────────────────────────
             let show_i = MenuItem::with_id(app, "show", "Open LiveTranslate", true, None::<&str>)?;
@@ -384,6 +444,7 @@ pub fn run() {
             register_ptt_shortcut,
             check_setup,
             start_setup,
+            warm_engine,
             check_vbcable,
             download_piper_voice,
         ])

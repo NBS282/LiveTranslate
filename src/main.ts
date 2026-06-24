@@ -71,18 +71,9 @@ function setStepDot(active: 1 | 2 | 3 | 4): void {
   });
 }
 
-// ── Global setup-progress listener (setup screen only) ───────────────────────
+// ── Legacy setup log element reference ────────────────────────────────────────
 
 const setupLog = document.getElementById("setup-log")!;
-
-listen<{ step: string; percent: number; detail: string }>("setup-progress", (e) => {
-  const { step, percent, detail } = e.payload;
-  setProgress("setup-bar-fill", "setup-pct", "setup-step", percent, friendlySetupText(step));
-  if (detail) {
-    setupLog.textContent += `${detail}\n`;
-    setupLog.scrollTop = setupLog.scrollHeight;
-  }
-});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -91,26 +82,107 @@ async function init(): Promise<void> {
     const status = await invoke<{ venv_ok: boolean; piper_voice_ok: boolean; ready: boolean }>(
       "check_setup",
     );
-    if (status.ready) {
-      show("screen-onboarding");
-      setStepDot(1);
-      void checkVBCable();
-    } else {
-      show("screen-setup");
+
+    // Already installed and onboarded → go straight to the app.
+    if (status.ready && localStorage.getItem("lt.onboarded") === "1") {
+      show("screen-main");
+      void import("./live.ts");
+      return;
     }
+
+    if (!status.ready) {
+      // Not installed yet → mandatory install screen (user must complete this first).
+      show("screen-setup");
+      return;
+    }
+
+    // Installed but onboarding not yet finished (e.g. restarted mid-onboarding).
+    // Warm the engine in the background so models load while the user onboards.
+    void invoke("warm_engine");
+    show("screen-onboarding");
+    setStepDot(1);
+    void checkVBCable();
   } catch (err) {
     console.error("init failed:", err);
     show("screen-setup");
   }
 }
 
-// ── Setup screen ─────────────────────────────────────────────────────────────
+// ── Onboarding: setup installation ───────────────────────────────────────────
 
-const btnRunSetup = document.getElementById("btn-run-setup") as HTMLButtonElement;
+document.getElementById("btn-ob-setup")!.addEventListener("click", () => {
+  const btn = document.getElementById("btn-ob-setup") as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = "Instalando…";
+  document.getElementById("ob-setup-progress")!.classList.remove("hidden");
+  void invoke("start_setup");
+});
 
-btnRunSetup.addEventListener("click", () => {
-  btnRunSetup.disabled = true;
-  btnRunSetup.textContent = "Instalando…";
+// ── Shared setup-progress listener (works for onboarding prompt & legacy screen) ──
+
+let setupOrigin: "onboarding" | "screen-setup" = "onboarding";
+
+listen<{ step: string; percent: number; detail: string }>("setup-progress", (e) => {
+  const { step, percent, detail } = e.payload;
+  if (setupOrigin === "onboarding") {
+    setProgress("ob-setup-bar-fill", "ob-setup-pct", "ob-setup-step", percent, friendlySetupText(step));
+  } else {
+    setProgress("setup-bar-fill", "setup-pct", "setup-step", percent, friendlySetupText(step));
+    if (detail) {
+      setupLog.textContent += `${detail}\n`;
+      setupLog.scrollTop = setupLog.scrollHeight;
+    }
+  }
+});
+
+listen<{ success: boolean; error?: string }>("setup-done", (e) => {
+  if (e.payload.success) {
+    // Setup just finished — warm the engine NOW so the 1.1 GB model loads into
+    // RAM while the user goes through onboarding. By the time they hit "Start",
+    // the server is ready and translation works on the first try.
+    void invoke("warm_engine");
+
+    // Hide setup prompt in onboarding, start VB-Cable check
+    document.getElementById("ob-setup-prompt")!.classList.add("hidden");
+    document.getElementById("btn-ob-next-1")!.classList.remove("hidden");
+    show("screen-onboarding");
+    setStepDot(1);
+    void checkVBCable();
+
+    // Reset origin for next time
+    setupOrigin = "onboarding";
+  } else {
+    // Show error where appropriate
+    if (setupOrigin === "onboarding") {
+      document.getElementById("ob-setup-step")!.textContent = "Algo salió mal. Intentá de nuevo.";
+      const btn = document.getElementById("btn-ob-setup") as HTMLButtonElement;
+      btn.disabled = false;
+      btn.textContent = "Reintentar";
+    } else {
+      const errMsg = e.payload.error ?? "";
+      const firstLine = errMsg.split("\n")[0] || "Algo salió mal. Mirá los detalles e intentá de nuevo.";
+      document.getElementById("setup-step")!.textContent = firstLine;
+      const log = document.getElementById("setup-log")!;
+      if (errMsg) {
+        log.textContent += `\n--- Error ---\n${errMsg}\n`;
+        log.scrollTop = log.scrollHeight;
+      }
+      log.classList.remove("hidden");
+      document.getElementById("setup-details-toggle")!.textContent = "Ocultar detalles";
+      const btn = document.getElementById("btn-run-setup") as HTMLButtonElement;
+      btn.disabled = false;
+      btn.textContent = "Reintentar";
+    }
+  }
+});
+
+// ── Legacy setup screen (still reachable, sets origin so listeners work) ─────
+
+document.getElementById("btn-run-setup")!.addEventListener("click", () => {
+  setupOrigin = "screen-setup";
+  const btn = document.getElementById("btn-run-setup") as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = "Instalando…";
   document.getElementById("setup-progress-box")!.classList.remove("hidden");
   setupLog.textContent = "";
   void invoke("start_setup");
@@ -120,20 +192,6 @@ document.getElementById("setup-details-toggle")!.addEventListener("click", () =>
   const log = document.getElementById("setup-log")!;
   const hidden = log.classList.toggle("hidden");
   document.getElementById("setup-details-toggle")!.textContent = hidden ? "Ver detalles" : "Ocultar detalles";
-});
-
-listen<{ success: boolean; error?: string }>("setup-done", (e) => {
-  if (e.payload.success) {
-    show("screen-onboarding");
-    setStepDot(1);
-    void checkVBCable();
-  } else {
-    document.getElementById("setup-step")!.textContent = "Algo salió mal. Mirá los detalles e intentá de nuevo.";
-    document.getElementById("setup-log")!.classList.remove("hidden");
-    document.getElementById("setup-details-toggle")!.textContent = "Ocultar detalles";
-    btnRunSetup.disabled = false;
-    btnRunSetup.textContent = "Reintentar";
-  }
 });
 
 // ── Onboarding step 1: VB-Cable ──────────────────────────────────────────────
@@ -194,6 +252,7 @@ document.getElementById("btn-ob-next-3")!.addEventListener("click", () => {
 // ── Onboarding step 4: finish ────────────────────────────────────────────────
 
 document.getElementById("btn-ob-finish")!.addEventListener("click", () => {
+  localStorage.setItem("lt.onboarded", "1");
   show("screen-main");
   void import("./live.ts");
 });

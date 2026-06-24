@@ -29,6 +29,11 @@ def _piper_voice_path() -> str:
 def _get_asr():
     global _asr
     if _asr is None:
+        import os
+        # NeMo respects NEMO_CACHE_DIR; mirror HF_HOME so models stay in the app dir.
+        hf_home = os.environ.get("HF_HOME")
+        if hf_home and "NEMO_CACHE_DIR" not in os.environ:
+            os.environ["NEMO_CACHE_DIR"] = os.path.join(hf_home, "nemo")
         from nemo.collections.asr.models import ASRModel
         _asr = ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3", map_location="cpu")
     return _asr

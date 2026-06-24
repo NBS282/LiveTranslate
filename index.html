@@ -10,10 +10,12 @@
     <!-- ════════════ Splash ════════════ -->
     <div id="splash" class="splash">
       <div class="splash-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M2 12h20" />
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        <svg viewBox="0 0 30 30" fill="currentColor">
+          <rect x="2.5" y="18" width="3" height="9" rx="1.5"/>
+          <rect x="8" y="14" width="3" height="13" rx="1.5"/>
+          <rect x="13.5" y="9" width="3" height="18" rx="1.5"/>
+          <rect x="19" y="14" width="3" height="13" rx="1.5"/>
+          <rect x="24.5" y="18" width="3" height="9" rx="1.5"/>
         </svg>
       </div>
       <div class="splash-title">LiveTranslate</div>
@@ -26,53 +28,47 @@
 
     <!-- ════════════ Setup screen ════════════ -->
     <section id="screen-setup" class="screen hidden">
-      <div class="card">
-        <div class="brand">
-          <div class="logo-mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M2 12h20" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
-          </div>
-          <div class="brand-text">
-            <span class="brand-name">LiveTranslate</span>
-            <span class="brand-sub">Traducción de voz en vivo</span>
-          </div>
+      <div class="setup-wrap">
+        <div class="setup-icon">
+          <svg viewBox="0 0 30 30" fill="currentColor">
+            <rect x="2.5" y="18" width="3" height="9" rx="1.5"/>
+            <rect x="8" y="14" width="3" height="13" rx="1.5"/>
+            <rect x="13.5" y="9" width="3" height="18" rx="1.5"/>
+            <rect x="19" y="14" width="3" height="13" rx="1.5"/>
+            <rect x="24.5" y="18" width="3" height="9" rx="1.5"/>
+          </svg>
         </div>
 
-        <div class="setup-body">
-          <div class="setup-hero">
-            <h1>Configuración inicial</h1>
-            <p class="lead">Vamos a preparar el motor de traducción y la voz. Solo toma un momento y se hace una sola vez.</p>
-          </div>
+        <div class="setup-head">
+          <h2>LiveTranslate</h2>
+          <p class="setup-tagline">Traducción de voz en tiempo real</p>
+        </div>
 
-          <ul class="feature-list">
-            <li>
-              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
-              <span>Traduce tu voz de <strong>español a inglés</strong> mientras hablas.</span>
-            </li>
-            <li>
-              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
-              <span>La otra persona <strong>te escucha en inglés</strong> en Zoom, Discord o Meet.</span>
-            </li>
-            <li>
-              <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
-              <span>Funciona <strong>en tu equipo</strong>, sin enviar tu audio a la nube.</span>
-            </li>
-          </ul>
+        <ul class="feature-list">
+          <li>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+            <span>Traduce tu voz de <strong>español a inglés</strong> mientras hablas.</span>
+          </li>
+          <li>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+            <span>La otra persona <strong>te escucha en inglés</strong> en Zoom, Discord o Meet.</span>
+          </li>
+          <li>
+            <span class="tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg></span>
+            <span>Funciona <strong>en tu equipo</strong>, sin enviar tu audio a la nube.</span>
+          </li>
+        </ul>
 
-          <div id="setup-progress-box" class="progress-section hidden">
-            <div class="progress-header">
-              <span id="setup-step">Preparando todo para ti…</span>
-              <span id="setup-pct">0%</span>
-            </div>
-            <div class="progress-track">
-              <div id="setup-bar-fill" class="progress-fill" style="width: 0%"></div>
-            </div>
-            <button id="setup-details-toggle" class="details-toggle">Ver detalles</button>
-            <pre id="setup-log" class="hidden"></pre>
+        <div id="setup-progress-box" class="progress-section hidden">
+          <div class="progress-header">
+            <span id="setup-step">Preparando todo para ti…</span>
+            <span id="setup-pct">0%</span>
           </div>
+          <div class="progress-track">
+            <div id="setup-bar-fill" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <button id="setup-details-toggle" class="details-toggle">Ver detalles</button>
+          <pre id="setup-log" class="hidden"></pre>
         </div>
 
         <button id="btn-run-setup" class="btn-primary btn-full">Comenzar instalación</button>
@@ -95,6 +91,25 @@
 
         <!-- ── Step 1: VB-Cable ── -->
         <div id="ob-step-1" class="ob-step">
+          <!-- Setup prompt (shown when engine is not yet installed) -->
+          <div id="ob-setup-prompt" class="note-card hidden">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6" /><rect x="8" y="8" width="8" height="6" rx="1.5" /><path d="M10 14v4" /><path d="M14 14v4" /></svg>
+            <div>
+              <span><strong>Preparar motor de traducción</strong></span>
+              <p class="note-text">El motor de traducción aún no está instalado. Vamos a preparar Python, el modelo de traducción y la voz. Solo se hace una vez.</p>
+              <div id="ob-setup-progress" class="progress-section hidden">
+                <div class="progress-header">
+                  <span id="ob-setup-step">Preparando todo para ti…</span>
+                  <span id="ob-setup-pct">0%</span>
+                </div>
+                <div class="progress-track">
+                  <div id="ob-setup-bar-fill" class="progress-fill" style="width: 0%"></div>
+                </div>
+              </div>
+              <button id="btn-ob-setup" class="btn-primary">Comenzar instalación</button>
+            </div>
+          </div>
+
           <div class="ob-head">
             <div class="step-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6" /><rect x="8" y="8" width="8" height="6" rx="1.5" /><path d="M10 14v4" /><path d="M14 14v4" /></svg>

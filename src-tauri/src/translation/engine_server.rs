@@ -105,6 +105,12 @@ pub fn spawn_server() -> Result<Child, String> {
         _ => python_src_str.into_owned(),
     };
 
+    let models_hf = crate::translation::sidecar::repo_root()
+        .join("models")
+        .join("hf");
+    let hf_cache = models_hf.to_string_lossy().into_owned();
+    let nemo_cache = models_hf.join("nemo").to_string_lossy().into_owned();
+
     let mut cmd = Command::new(&program);
     cmd.args(["-m", "lt_engine.server"])
         .env("PYTHONPATH", &pythonpath)
@@ -112,6 +118,9 @@ pub fn spawn_server() -> Result<Child, String> {
             "PIPER_VOICE",
             crate::setup::piper_voice_path().to_string_lossy().as_ref(),
         )
+        .env("HF_HOME", &hf_cache)
+        .env("TRANSFORMERS_CACHE", &hf_cache)
+        .env("NEMO_CACHE_DIR", &nemo_cache)
         .stderr(Stdio::piped());
 
     // Only set current_dir when the directory exists. On Windows, an invalid
