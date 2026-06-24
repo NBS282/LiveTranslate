@@ -205,6 +205,7 @@ LiveTranslate is in active development. Current focus areas:
 - [ ] Linux / macOS support
 - [ ] Built-in model download manager
 - [ ] Live keyboard output — type the translation as if you were physically typing it, so it appears in any text field on screen (chat, forms, live captions)
+- [ ] Voice cloning — instead of a generic TTS voice, the translated audio will sound like your own voice speaking the target language
 
 ---
 
