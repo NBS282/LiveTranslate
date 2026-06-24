@@ -2,6 +2,8 @@
 torch==2.7.0+cpu
 
 --index-url https://pypi.org/simple
+huggingface_hub>=0.25
+hf_xet
 nemo_toolkit[asr]
 transformers
 sentencepiece

@@ -356,7 +356,14 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
 
     let python = venv_python();
 
-    // ── Step 1.5 (Windows): ensure VC++ 2015-2022 x64 runtime is present ─────
+    // ── Step 1.5: upgrade pip to latest ──────────────────────────────────────
+    // ensurepip --upgrade only ships the pip version bundled with Python, not
+    // the latest from PyPI. hf_xet (and some nemo deps) need a modern pip with
+    // PEP 517 build-backend support.
+    emit_progress(app, "Upgrading pip", 13, "");
+    run_pip(app, &python, &["install", "--upgrade", "pip"], 13, 15)?;
+
+    // ── Step 1.6 (Windows): ensure VC++ 2015-2022 x64 runtime is present ─────
     // PyTorch DLLs (c10.dll, torch_cpu.dll, …) link against msvcp140.dll and
     // vcruntime140.dll. On a fresh Windows install those are missing. We detect
     // the absence and silently install the official redistributable before pip
@@ -436,6 +443,9 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
             // Pin huggingface_hub to a version where the Windows symlink
             // fallback (WinError 1314) uses correct absolute paths internally.
             "huggingface_hub>=0.25",
+            // Enables Xet chunked parallel downloads from HuggingFace Hub
+            // (significantly faster for large models like Parakeet ~1.1 GB).
+            "hf_xet",
         ],
         55,
         85,
