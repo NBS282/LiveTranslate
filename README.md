@@ -37,25 +37,20 @@ Think subtitle glasses for real life: meetings, video calls, movies, live stream
 
 ### How it works
 
+1. **Capture** — audio is read from your microphone or any system audio source (Zoom, YouTube, games) via WASAPI loopback.
+2. **Transcribe** — [Parakeet-TDT](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) converts the spoken audio into text (~0.5 s per phrase on GPU).
+3. **Translate** — [Opus-MT](https://huggingface.co/Helsinki-NLP/opus-mt-es-en) translates the text into your target language (~1–2 s on CPU).
+4. **Display** — the translation appears as a transparent subtitle overlay that floats above all windows. Optionally, [Piper TTS](https://github.com/rhasspy/piper) reads it aloud.
+
+```mermaid
+flowchart LR
+    A["🎙️ Mic / System Audio"] --> B["Parakeet-TDT\nSpeech → Text"]
+    B --> C["Opus-MT\nText → Text"]
+    C --> D["📺 Subtitle Overlay"]
+    C --> E["🔊 Piper TTS\noptional"]
 ```
-Microphone / System Audio
-        │
-        ▼
-┌─────────────────┐
-│   ASR (Whisper)  │  Speech → Text  (source language)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Translation   │  Text → Text  (target language)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐      ┌──────────────────┐
-│  Subtitle       │  or  │ TTS (Piper)       │
-│  Overlay        │      │ Audio playback    │
-└─────────────────┘      └──────────────────┘
-```
+
+Everything runs locally on your machine. No audio or text is ever sent to the cloud.
 
 ---
 
