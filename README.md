@@ -71,6 +71,7 @@ Without the virtual cable, LiveTranslate still works — you see the subtitles a
 
 - **Microphone mode** — translate your own speech into another language
 - **System audio mode** — capture audio from any app (Zoom, Teams, YouTube, Netflix, games)
+- **English pass-through** — if you speak in English, LiveTranslate detects it and skips translation entirely; the original audio goes through unchanged
 - **Push-to-talk** — hold a hotkey to translate, release to stop
 - **On-screen subtitles** — transparent overlay sits above all windows, click-through, auto-hides
 - **Audio playback (TTS)** — hear the translation spoken aloud (Piper voices)
