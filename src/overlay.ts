@@ -1,5 +1,5 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { primaryMonitor, LogicalPosition } from "@tauri-apps/api/window";
+import { primaryMonitor, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 const subtitle = document.getElementById("subtitle")!;
@@ -26,6 +26,38 @@ async function init(): Promise<void> {
       new LogicalPosition(
         Math.round((screenW - winW) / 2),
         Math.round(screenH - winH - 76),
+      ),
+    );
+  }
+}
+
+/// Resize the window to fit the subtitle card snugly, then re-center
+/// at the bottom of the screen.
+const MIN_WIN_W = 320;
+const WIN_PAD = 12;
+
+async function resizeToContent(): Promise<void> {
+  await new Promise((r) => requestAnimationFrame(r));
+
+  const card = document.querySelector<HTMLElement>(".subtitle-card");
+  if (!card) return;
+  const { width, height } = card.getBoundingClientRect();
+
+  const w = Math.max(MIN_WIN_W, Math.ceil(width + WIN_PAD * 2));
+  const h = Math.ceil(height + WIN_PAD * 2);
+
+  await win.setSize(new LogicalSize(w, h));
+
+  // Re-center at bottom of screen
+  const monitor = await primaryMonitor();
+  if (monitor) {
+    const scale = monitor.scaleFactor;
+    const screenW = monitor.size.width / scale;
+    const screenH = monitor.size.height / scale;
+    await win.setPosition(
+      new LogicalPosition(
+        Math.round((screenW - w) / 2),
+        Math.round(screenH - h - 40),
       ),
     );
   }
@@ -112,6 +144,10 @@ void listen<{ source_text: string; translated_text: string; error: string | null
     await win.show();
     subtitle.classList.add("visible");
     srcText.textContent = `ES: ${e.payload.source_text}`;
+    // Fill the full text so the card has its final size when we measure.
+    tgtChars.textContent = e.payload.translated_text;
+    await resizeToContent();
+    // Now clear and start the char-by-char streaming effect.
     streamText(e.payload.translated_text);
     scheduleHide();
   },

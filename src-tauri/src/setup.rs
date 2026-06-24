@@ -73,6 +73,23 @@ pub fn check() -> SetupStatus {
     }
 }
 
+/// Setup status resolved from the canonical per-user data directory.
+///
+/// `repo_root()` relies on the `LT_ENGINE_ROOT` env var, which is set in lib.rs
+/// during app startup. If that var is ever missing on a launch, `repo_root()`
+/// falls back to the executable's directory — which has no `engine/` or `models/`,
+/// so `check()` wrongly reports "not installed" and the user is sent back to setup
+/// on every reopen. Resolving the data dir straight from the AppHandle here (and
+/// re-asserting the env var) makes the readiness check immune to that timing issue.
+pub fn check_with_app(app: &AppHandle) -> SetupStatus {
+    #[cfg(not(debug_assertions))]
+    if let Ok(dir) = app.path().app_local_data_dir() {
+        std::env::set_var("LT_ENGINE_ROOT", dir.to_string_lossy().as_ref());
+    }
+    let _ = app; // used only in release builds
+    check()
+}
+
 // ── Progress events ───────────────────────────────────────────────────────────
 
 fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {

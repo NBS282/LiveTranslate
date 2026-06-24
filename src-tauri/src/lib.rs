@@ -222,8 +222,8 @@ fn stop_live_translation(state: tauri::State<AppState>) {
 }
 
 #[tauri::command]
-fn check_setup() -> setup::SetupStatus {
-    setup::check()
+fn check_setup(app: tauri::AppHandle) -> setup::SetupStatus {
+    setup::check_with_app(&app)
 }
 
 #[tauri::command]
