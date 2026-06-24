@@ -223,8 +223,11 @@ Currently Spanish → English. We're working on NLLB-200 for 200-language suppor
 **Is my data private?**
 100%. Everything runs on your machine. No audio, text, or any data ever leaves your computer.
 
-**Does it work with any app?**
-Yes — system audio mode captures audio from any application (Zoom, Teams, Discord, YouTube, Netflix, games).
+**Does it work with any video call app?**
+Yes. LiveTranslate translates your microphone and plays the result through a virtual audio cable. You then select that cable as your microphone inside the call app. This works with any app that lets you choose an audio input — Zoom, Teams, Google Meet, Discord, and others.
+
+**Can I use it to translate audio I'm listening to?**
+Yes. System audio mode captures whatever is playing on your computer and shows you real-time subtitles of what's being said — useful for foreign-language content like videos, podcasts, or streams.
 
 ---
 
