@@ -433,6 +433,9 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
             "fastapi[standard]",
             "uvicorn[standard]",
             "soundfile",
+            // Pin huggingface_hub to a version where the Windows symlink
+            // fallback (WinError 1314) uses correct absolute paths internally.
+            "huggingface_hub>=0.25",
         ],
         55,
         85,
@@ -484,8 +487,31 @@ except Exception as e:
 
 print("(2/2) Downloading Parakeet ASR model (~1.1 GB)...", flush=True)
 try:
-    # Use snapshot_download to cache files without loading the full model into
-    # RAM. NeMo 2.x (HF-backed) will find the cached files on server startup.
+    # On Windows without Developer Mode, os.symlink raises WinError 1314.
+    # huggingface_hub's fallback copies files using the relative symlink src
+    # resolved from CWD instead of from the symlink's parent — patch it so
+    # the copy always uses the correct absolute path.
+    import os as _os, shutil as _shutil
+    if _os.name == "nt":
+        try:
+            import huggingface_hub.file_download as _hfd
+            _orig_symlink = _hfd._create_symlink
+            def _safe_symlink(src, dst, new_blob=False):
+                try:
+                    _os.symlink(src, dst)
+                except OSError:
+                    abs_src = src if _os.path.isabs(src) else _os.path.normpath(
+                        _os.path.join(_os.path.dirname(dst), src)
+                    )
+                    if not _os.path.exists(dst):
+                        if new_blob:
+                            _shutil.move(abs_src, dst)
+                        else:
+                            _shutil.copy2(abs_src, dst)
+            _hfd._create_symlink = _safe_symlink
+        except Exception:
+            pass  # patch failed — rely on the version pin to have the fix
+
     from huggingface_hub import snapshot_download
     snapshot_download("nvidia/parakeet-tdt-0.6b-v3")
     print("Parakeet model files cached.", flush=True)
@@ -498,6 +524,7 @@ except Exception as e:
             ("HF_HOME", hf_cache_str.as_str()),
             ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
             ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
+            ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
         ],
     )?;
 
