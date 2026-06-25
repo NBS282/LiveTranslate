@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiveTranslate: Real-time voice translation</title>
+  <meta name="description" content="Speak in Spanish, be heard in English. Real-time voice translation that runs 100% locally, no cloud, no API keys." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #efe9dd;
+      --paper:        #f6f2e9;
+      --surface:      #fbf9f3;
+      --border:       #ddd4c2;
+      --ink:          #221e17;
+      --ink-2:        #5f584a;
+      --ink-3:        #8c8470;
+      --es:           #c1502e;
+      --en:           #20457e;
+      --en-hover:     #18365f;
+      --es-soft:      rgba(193,80,46,.1);
+      --en-soft:      rgba(32,69,126,.09);
+      --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+      --font-sans:    "Inter", system-ui, sans-serif;
+      --font-mono:    "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+      --radius:       5px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    /* ── top accent bar ── */
+    body::before {
+      content: "";
+      display: block;
+      height: 3px;
+      background: linear-gradient(90deg, var(--es) 0 50%, var(--en) 50% 100%);
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    /* ── NAV ── */
+    nav {
+      padding: 1rem 1.5rem;
+    }
+
+    .nav-inner {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+    }
+
+    .logo-word { line-height: 1; }
+    .logo-live { color: var(--es); }
+    .logo-translate { color: var(--en); }
+
+    .logo-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--es) 0 50%, var(--en) 50% 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--paper);
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(193,80,46,.15), 0 2px 8px rgba(32,69,126,.15);
+    }
+
+    .logo-mark svg { width: 17px; height: 17px; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.8rem;
+    }
+
+    .nav-links a {
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: var(--ink-2);
+      transition: color 0.15s;
+    }
+
+    .nav-links a:hover { color: var(--ink); }
+
+    .nav-icon { display: flex; align-items: center; }
+    .nav-icon svg { width: 20px; height: 20px; color: var(--ink-2); transition: color .15s; }
+    .nav-icon:hover svg { color: var(--ink); }
+
+
+    /* ── MAIN ── */
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 0 1.5rem 5rem;
+      text-align: center;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 3.5rem 0 2.5rem;
+    }
+
+    .hero-top {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.8rem;
+      margin-bottom: 2rem;
+      text-align: left;
+    }
+
+    .hero-icon {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero-icon svg { width: 110px; height: 90px; }
+
+    .hero h1 {
+      font-family: var(--font-display);
+      font-size: clamp(1.9rem, 5vw, 2.8rem);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      margin-bottom: 0.5rem;
+    }
+
+    .hero h1 .es { color: var(--es); }
+    .hero h1 .en { color: var(--en); }
+
+    .hero-sub {
+      font-size: 1rem;
+      color: var(--ink-2);
+      line-height: 1.55;
+    }
+
+    .cta-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1.1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.8rem;
+      background: var(--en);
+      color: var(--paper);
+      border-radius: var(--radius);
+      font-size: 0.95rem;
+      font-weight: 600;
+      font-family: var(--font-sans);
+      transition: background 0.15s, transform 0.12s;
+    }
+
+    .btn-primary:hover {
+      background: var(--en-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.92rem;
+      font-weight: 500;
+      color: var(--ink-2);
+      transition: color 0.15s;
+    }
+
+    .btn-ghost:hover { color: var(--ink); }
+
+    /* ── DIVIDER ── */
+    .section-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 0;
+    }
+
+    /* ── VIDEO ── */
+    .demo-section {
+      padding: 3.5rem 0;
+    }
+
+    .video-wrap {
+      background: var(--ink);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 24px 60px rgba(34,30,23,.18);
+      position: relative;
+    }
+
+    .video-wrap video {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    /* ── FEATURES ── */
+    .features-section {
+      padding: 3.5rem 0 2rem;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+
+    .feature-cell {
+      padding: 2rem 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .feature-cell:nth-child(odd) {
+      border-right: 1px solid var(--border);
+      padding-left: 0;
+    }
+
+    .feature-cell:nth-child(even) {
+      padding-right: 0;
+    }
+
+    .feature-cell:nth-child(3),
+    .feature-cell:nth-child(4) {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .feature-cell h3 {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-cell p {
+      font-size: 0.9rem;
+      color: var(--ink-2);
+      line-height: 1.6;
+    }
+
+    .feature-cell p a {
+      color: var(--en);
+      font-weight: 500;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .feature-cell p a:hover { color: var(--en-hover); }
+
+    /* ── HOW IT WORKS (pipeline) ── */
+    .pipeline-section {
+      padding: 3.5rem 0;
+    }
+
+    .pipeline-label {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      text-align: center;
+      display: block;
+      margin-bottom: 2rem;
+    }
+
+    .pipeline {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+
+    .pipeline-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 1rem 1.2rem;
+      text-align: center;
+    }
+
+    .pipeline-step .step-icon {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--en);
+    }
+
+    .pipeline-step .step-icon svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .pipeline-step .step-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--ink);
+      font-family: var(--font-display);
+    }
+
+    .pipeline-step .step-model {
+      font-family: var(--font-mono);
+      font-size: 0.6rem;
+      color: var(--ink-3);
+      letter-spacing: 0.04em;
+    }
+
+    .pipeline-arrow {
+      color: var(--ink-3);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      margin-bottom: 1.4rem;
+    }
+
+    .pipeline-arrow svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      text-align: center;
+      padding: 2.5rem 0 1rem;
+      font-size: 0.82rem;
+      color: var(--ink-3);
+      border-top: 1px solid var(--border);
+    }
+
+    footer a {
+      color: var(--en);
+      font-weight: 500;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 600px) {
+      nav { padding: 1rem 1.25rem; }
+      .nav-links { gap: 1.2rem; }
+      .nav-links .hide-sm { display: none; }
+      .hero { padding: 2.5rem 0 2rem; }
+      .hero-top { flex-direction: column; text-align: center; gap: 1.2rem; }
+      .hero-icon { width: 80px; height: 80px; }
+      .hero-icon svg { width: 40px; height: 40px; }
+      .features-grid { grid-template-columns: 1fr; }
+      .feature-cell { padding: 1.5rem 0 !important; border-right: none !important; }
+      .feature-cell:nth-child(2) { border-top: 1px solid var(--border); }
+      .feature-cell:nth-child(4) { border-bottom: none; }
+      .pipeline { flex-direction: column; gap: 0.2rem; }
+      .pipeline-arrow { transform: rotate(90deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .btn-primary:hover { transform: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav>
+  <div class="nav-inner">
+  <a href="#" class="nav-logo">
+    <span class="logo-mark">
+      <svg viewBox="0 0 30 26" fill="none">
+        <rect x="2" y="2" width="19" height="14" rx="3.5" fill="white"/>
+        <polygon points="4,16 10,16 7,21" fill="white"/>
+        <rect x="9" y="6" width="19" height="14" rx="3.5" fill="white" opacity="0.5"/>
+        <polygon points="18,20 25,20 23,25" fill="white" opacity="0.5"/>
+      </svg>
+    </span>
+    <span class="logo-word"><span class="logo-live">Live</span><span class="logo-translate">Translate</span></span>
+  </a>
+
+  <div class="nav-links">
+    <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.1.0/LiveTranslate_0.1.0_x64-setup.exe">download</a>
+    <a href="https://github.com/NBS282/LiveTranslate/blob/main/README.md">docs</a>
+    <a href="https://github.com/NBS282/LiveTranslate" class="nav-icon" aria-label="GitHub">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+      </svg>
+    </a>
+  </div>
+  </div>
+</nav>
+
+<!-- ── MAIN ── -->
+<main>
+
+  <!-- ── HERO ── -->
+  <section class="hero">
+    <div class="hero-top">
+      <div class="hero-icon">
+        <svg viewBox="0 0 108 82" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- ES bubble — you speaking -->
+          <rect x="0" y="0" width="66" height="50" rx="11" fill="#c1502e"/>
+          <polygon points="8,50 24,50 14,66" fill="#c1502e"/>
+          <!-- waveform bars in ES bubble -->
+          <rect x="11" y="19" width="3.5" height="12" rx="1.75" fill="white" opacity="0.9"/>
+          <rect x="19" y="14" width="3.5" height="22" rx="1.75" fill="white" opacity="0.9"/>
+          <rect x="27" y="11" width="3.5" height="28" rx="1.75" fill="white" opacity="0.9"/>
+          <rect x="35" y="13" width="3.5" height="24" rx="1.75" fill="white" opacity="0.9"/>
+          <rect x="43" y="17" width="3.5" height="16" rx="1.75" fill="white" opacity="0.9"/>
+          <rect x="51" y="20" width="3.5" height="10" rx="1.75" fill="white" opacity="0.9"/>
+          <!-- EN bubble — they hearing -->
+          <rect x="40" y="24" width="68" height="50" rx="11" fill="#20457e"/>
+          <polygon points="82,74 100,74 92,82" fill="#20457e"/>
+          <!-- text lines in EN bubble -->
+          <rect x="55" y="40" width="38" height="4" rx="2" fill="white" opacity="0.85"/>
+          <rect x="55" y="51" width="27" height="4" rx="2" fill="white" opacity="0.85"/>
+          <rect x="55" y="62" width="33" height="4" rx="2" fill="white" opacity="0.85"/>
+        </svg>
+      </div>
+      <div>
+        <h1>
+          <span class="es">speak in any language.</span><br>
+          <span class="en">be heard in any language.</span>
+        </h1>
+        <p class="hero-sub">real-time voice translation, 100% local, no cloud, no API keys</p>
+      </div>
+    </div>
+    <div class="cta-row">
+      <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.1.0/LiveTranslate_0.1.0_x64-setup.exe" class="btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+        </svg>
+        download for windows
+      </a>
+      <a href="https://github.com/NBS282/LiveTranslate" class="btn-ghost">
+        view source
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 7h10v10"/><path d="M7 17 17 7"/>
+        </svg>
+      </a>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ── VIDEO ── -->
+  <section class="demo-section">
+    <div class="video-wrap">
+      <video controls preload="metadata" poster="thumbnail.png" src="demo.mp4">
+        Your browser does not support the video tag.
+      </video>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ── FEATURES ── -->
+  <section class="features-section">
+    <div class="features-grid">
+      <div class="feature-cell">
+        <h3>Local &amp; Private</h3>
+        <p>All AI models run on your machine. Your voice, your words, nothing ever reaches a server.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Open Source</h3>
+        <p>Built on Tauri, Python, and HuggingFace models. Fork it, extend it, make it yours.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Real-time</h3>
+        <p>From your voice to translated audio in ~1–2 seconds. GPU-accelerated when available.</p>
+      </div>
+      <div class="feature-cell">
+        <h3>Works with any app</h3>
+        <p>Routes through a virtual audio cable, compatible with Zoom, Teams, Meet, Discord, and anything else.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-divider"></div>
+
+  <!-- ── PIPELINE ── -->
+  <section class="pipeline-section">
+    <span class="pipeline-label">How it works</span>
+    <div class="pipeline">
+      <div class="pipeline-step">
+        <span class="step-icon">
+          <!-- Microphone -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <path d="M12 19v3"/>
+            <path d="M9 22h6"/>
+          </svg>
+        </span>
+        <span class="step-name">Microphone</span>
+        <span class="step-model">your voice</span>
+      </div>
+      <span class="pipeline-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+      </span>
+      <div class="pipeline-step">
+        <span class="step-icon">
+          <!-- Waveform / transcribe -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12h2"/><path d="M6 8v8"/><path d="M10 5v14"/><path d="M14 9v6"/><path d="M18 7v10"/><path d="M22 12h-2"/>
+          </svg>
+        </span>
+        <span class="step-name">Transcribe</span>
+        <span class="step-model">Parakeet-TDT</span>
+      </div>
+      <span class="pipeline-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+      </span>
+      <div class="pipeline-step">
+        <span class="step-icon">
+          <!-- Languages / translate -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m5 8 6 6"/>
+            <path d="m4 14 6-6 2-3"/>
+            <path d="M2 5h12"/>
+            <path d="M7 2h1"/>
+            <path d="m22 22-5-10-5 10"/>
+            <path d="M14 18h6"/>
+          </svg>
+        </span>
+        <span class="step-name">Translate</span>
+        <span class="step-model">Opus-MT</span>
+      </div>
+      <span class="pipeline-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+      </span>
+      <div class="pipeline-step">
+        <span class="step-icon">
+          <!-- Speaker / TTS -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+          </svg>
+        </span>
+        <span class="step-name">Speak</span>
+        <span class="step-model">Piper TTS</span>
+      </div>
+      <span class="pipeline-arrow">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+        </svg>
+      </span>
+      <div class="pipeline-step">
+        <span class="step-icon">
+          <!-- Video call -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 10l4.553-2.069A1 1 0 0 1 21 8.845v6.31a1 1 0 0 1-1.447.914L15 14"/>
+            <rect x="3" y="8" width="12" height="8" rx="2"/>
+          </svg>
+        </span>
+        <span class="step-name">Call</span>
+        <span class="step-model">virtual cable</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <p>made with ♥ speaking Spanish &nbsp;·&nbsp; <a href="https://github.com/NBS282/LiveTranslate">GitHub</a> &nbsp;·&nbsp; MIT License</p>
+</footer>
+
+</body>
+</html>

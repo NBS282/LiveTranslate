@@ -76,7 +76,6 @@ tts_test.*
 src-tauri/gen/
 
 # ── Internal planning / SDD artifacts (not source code) ──
-docs/
 openspec/
 sdd/
 .vscode/
