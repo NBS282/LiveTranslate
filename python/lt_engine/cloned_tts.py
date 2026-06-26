@@ -8,6 +8,7 @@ if a profile already exists, and reset_voice_prompt() after deletion.
 from __future__ import annotations
 
 import os
+import threading
 import wave
 import numpy as np
 
@@ -15,16 +16,19 @@ from . import voice_profile as vp
 
 _luxtts = None
 _voice_prompt: dict | None = None
+_luxtts_lock = threading.Lock()
 
 
 def _get_luxtts():
     global _luxtts
     if _luxtts is None:
-        from zipvoice.luxvoice import LuxTTS
+        with _luxtts_lock:
+            if _luxtts is None:  # double-checked locking
+                from zipvoice.luxvoice import LuxTTS
 
-        hf_repo = "YatharthS/LuxTTS"
-        threads = min(os.cpu_count() or 4, 8)
-        _luxtts = LuxTTS(model_path=hf_repo, device="cpu", threads=threads)
+                hf_repo = "YatharthS/LuxTTS"
+                threads = min(os.cpu_count() or 4, 8)
+                _luxtts = LuxTTS(model_path=hf_repo, device="cpu", threads=threads)
     return _luxtts
 
 
@@ -52,7 +56,6 @@ def reset_voice_prompt() -> None:
 def warmup_cloned() -> None:
     """Load model + encode reference. No-op if no profile exists."""
     if vp.exists():
-        _get_luxtts()
         get_voice_prompt()
 
 
