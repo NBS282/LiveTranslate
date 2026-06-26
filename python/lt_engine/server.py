@@ -2,10 +2,12 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from .pipeline import translate_audio, warmup
+from . import voice_profile as vp
+from .cloned_tts import reset_voice_prompt
 
 
 @asynccontextmanager
@@ -22,6 +24,7 @@ class TranslateRequest(BaseModel):
     out_dir: str
     src: str = "es"
     tgt: str = "en"
+    use_cloned_voice: bool = False
 
 
 @app.get("/health")
@@ -34,13 +37,50 @@ def do_translate(req: TranslateRequest) -> dict:
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     try:
-        return translate_audio(req.input_path, req.out_dir, req.src, req.tgt)
+        return translate_audio(
+            req.input_path,
+            req.out_dir,
+            req.src,
+            req.tgt,
+            req.use_cloned_voice,
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         import traceback
-        traceback.print_exc()  # full traceback to server stderr for diagnosis
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"translation failed: {e}")
+
+
+@app.get("/voice-profile")
+def get_voice_profile() -> dict:
+    return {"exists": vp.exists()}
+
+
+@app.post("/voice-profile")
+async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
+    """Save reference audio and encode the voice prompt for future synthesis."""
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="empty audio file")
+    vp.save(audio_bytes)
+    # Encode reference eagerly so the first translate call has zero extra latency.
+    try:
+        from .cloned_tts import get_voice_prompt
+        reset_voice_prompt()  # clear any stale cached prompt
+        get_voice_prompt()    # encode and cache the new reference
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"voice encoding failed: {e}")
+    return {"exists": True}
+
+
+@app.delete("/voice-profile")
+def delete_voice_profile() -> dict:
+    vp.delete()
+    reset_voice_prompt()
+    return {"exists": False}
 
 
 def main() -> None:

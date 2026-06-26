@@ -83,6 +83,9 @@ def warmup() -> None:
     _get_asr()
     _get_mt()
     _get_piper()
+    # Pre-load LuxTTS + encode reference only if a profile already exists.
+    from .cloned_tts import warmup_cloned
+    warmup_cloned()
 
 
 def translate_audio(
@@ -90,6 +93,7 @@ def translate_audio(
     out_dir: str,
     src: str = "es",
     tgt: str = "en",
+    use_cloned_voice: bool = False,
 ) -> dict:
     """Run the full STT -> MT -> TTS pipeline on a WAV file.
 
@@ -98,6 +102,8 @@ def translate_audio(
         out_dir: Directory where output.wav will be written.
         src: Unused — model is ES->EN only, kept for API compatibility.
         tgt: Unused — model is ES->EN only, kept for API compatibility.
+        use_cloned_voice: If True and a voice profile exists, use LuxTTS
+            instead of Piper for synthesis.
 
     Returns:
         dict with keys: output_wav, source_text, translated_text.
@@ -113,7 +119,12 @@ def translate_audio(
 
     translated_text = translate(source_text)
     out_wav = os.path.join(out_dir, "output.wav")
-    synthesize(translated_text, out_wav)
+
+    if use_cloned_voice:
+        from .cloned_tts import synthesize_cloned
+        synthesize_cloned(translated_text, out_wav)
+    else:
+        synthesize(translated_text, out_wav)
 
     return {
         "output_wav": out_wav,
