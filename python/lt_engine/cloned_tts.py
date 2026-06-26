@@ -1,19 +1,14 @@
 # python/lt_engine/cloned_tts.py
-"""Chatterbox Turbo voice cloning wrapper (CPU, f32 dtype patch, ~700 MB RAM).
+"""Pocket TTS voice cloning wrapper (CPU, ~200ms first chunk, 100M params).
 
-The model and the reference audio path are kept as module-level singletons
-so the server pays the load cost only once. Call warmup_cloned() at startup
-if a profile already exists, and reset_voice_prompt() after deletion.
-
-Chatterbox Turbo (Resemble AI, 350M params, MIT license) is a distilled
-1-step decoder TTS model supporting zero-shot voice cloning and
-paralinguistic tags (``[laugh]``, ``[cough]``, ``[chuckle]``).  It loads
-reference audio from disk at generation time — no separate prompt encoding.
+The model and the voice state are module-level singletons so the server
+pays the load cost only once. Call warmup_engine() at startup.
+Call export_voice_state() after saving a new profile so the next
+generation loads from .safetensors (fast) instead of reprocessing the WAV.
 """
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import wave
 import numpy as np
@@ -23,131 +18,77 @@ from . import voice_profile as vp
 _log = logging.getLogger(__name__)
 
 _model = None
-_voice_prompt: str | None = None  # stores the reference WAV path
+_voice_state = None
 _model_lock = threading.Lock()
-_prompt_lock = threading.Lock()
-
-# Chatterbox Turbo outputs at 24 kHz.
-_MODEL_SAMPLE_RATE = 24000
-
-
-# ---------------------------------------------------------------------------
-# f32 dtype patch for CPU inference
-# ---------------------------------------------------------------------------
-
-def _patch_torch_load():
-    """Monkey-patch ``torch.load`` to default ``map_location="cpu"``.
-
-    Chatterbox Turbo weights may have been saved with CUDA metadata.
-    This ensures they load on CPU without raising a device mismatch error.
-    Returns the original ``torch.load`` so callers can restore it.
-    """
-    import torch
-
-    orig = torch.load
-
-    def _patched(*args, **kwargs):
-        kwargs.setdefault("map_location", "cpu")
-        return orig(*args, **kwargs)
-
-    torch.load = _patched
-    return orig
-
-
-def _restore_torch_load(orig):
-    """Restore the original ``torch.load`` after model setup."""
-    import torch
-
-    torch.load = orig
-
-
-# ---------------------------------------------------------------------------
-# f32 dtype patch for librosa-loaded float64 audio (voicebox reference)
-# ---------------------------------------------------------------------------
-
-def _patch_chatterbox_f32(model) -> None:
-    """Patch float64→float32 dtype mismatches in upstream chatterbox.
-
-    libsora.load returns float64 numpy arrays. Multiple upstream code paths
-    convert these to torch tensors via ``torch.from_numpy()`` without casting,
-    then matmul against float32 model weights. This patches the two known
-    entry points:
-
-    1. ``S3Tokenizer.log_mel_spectrogram`` — audio tensor hits ``_mel_filters`` (f32)
-    2. ``VoiceEncoder.forward`` — float64 mel spectrograms hit LSTM weights (f32)
-    """
-    import types
-
-    # Patch S3Tokenizer
-    _tokzr = model.s3gen.tokenizer
-    _orig_log_mel = _tokzr.log_mel_spectrogram.__func__
-
-    def _f32_log_mel(self_tokzr, audio, padding=0):
-        import torch as _torch
-
-        if _torch.is_tensor(audio):
-            audio = audio.float()
-        return _orig_log_mel(self_tokzr, audio, padding)
-
-    _tokzr.log_mel_spectrogram = types.MethodType(_f32_log_mel, _tokzr)
-
-    # Patch VoiceEncoder
-    _ve = model.ve
-    _orig_ve_forward = _ve.forward.__func__
-
-    def _f32_ve_forward(self_ve, mels):
-        return _orig_ve_forward(self_ve, mels.float())
-
-    _ve.forward = types.MethodType(_f32_ve_forward, _ve)
-
+_state_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Model singleton
 # ---------------------------------------------------------------------------
 
 def _get_model():
-    """Return the Chatterbox Turbo model singleton (lazy init, thread-safe)."""
+    """Return the Pocket TTS model singleton (lazy init, thread-safe)."""
     global _model
     if _model is None:
         with _model_lock:
-            if _model is None:  # double-checked locking
-                import torch
-                from huggingface_hub import snapshot_download
-                from chatterbox.tts_turbo import ChatterboxTurboTTS
-
-                local_path = snapshot_download(repo_id="ResembleAI/chatterbox-turbo")
-                _log.info("Chatterbox Turbo model downloaded at %s", local_path)
-
-                orig_load = _patch_torch_load()
-                try:
-                    _model = ChatterboxTurboTTS.from_local(local_path, device="cpu")
-                finally:
-                    _restore_torch_load(orig_load)
-
-                _patch_chatterbox_f32(_model)
-                _log.info("Chatterbox Turbo model loaded on CPU (f32 patch applied)")
+            if _model is None:
+                from pocket_tts import TTSModel
+                _model = TTSModel.load_model()
+                _log.info("Pocket TTS model loaded")
     return _model
 
 
 # ---------------------------------------------------------------------------
-# Voice prompt (reference audio path)
+# Voice state management
 # ---------------------------------------------------------------------------
 
-def get_voice_prompt() -> str | None:
-    """Return the cached reference audio path, or *None* if no profile."""
-    global _voice_prompt
-    if _voice_prompt is None and vp.exists():
-        with _prompt_lock:
-            if _voice_prompt is None:
-                _voice_prompt = str(vp.reference_path())
-    return _voice_prompt
+def _state_path():
+    """Pre-computed voice state file (.safetensors) alongside the WAV."""
+    return vp.profile_dir() / "reference.safetensors"
 
 
-def reset_voice_prompt() -> None:
-    """Clear the cached reference path (call after profile deletion)."""
-    global _voice_prompt
-    with _prompt_lock:
-        _voice_prompt = None
+def get_voice_state():
+    """Return the cached voice state, computing it on first access.
+
+    Prefers loading from .safetensors (fast) over reprocessing the WAV.
+    Returns None if no voice profile exists.
+    """
+    global _voice_state
+    if _voice_state is None and vp.exists():
+        with _state_lock:
+            if _voice_state is None:
+                model = _get_model()
+                st = _state_path()
+                src = str(st) if st.exists() else str(vp.reference_path())
+                _voice_state = model.get_state_for_audio_prompt(src)
+                _log.info("Voice state loaded from %s", src)
+    return _voice_state
+
+
+def reset_voice_state() -> None:
+    """Clear the cached voice state (call after profile save or deletion)."""
+    global _voice_state
+    with _state_lock:
+        _voice_state = None
+
+
+def export_voice_state() -> None:
+    """Pre-compute voice state from the reference WAV and save as .safetensors.
+
+    Call this after uploading new reference audio so subsequent calls to
+    get_voice_state() use the fast .safetensors path instead of reprocessing
+    the raw WAV (which is relatively slow per the Pocket TTS docs).
+    """
+    if not vp.exists():
+        return
+    try:
+        from pocket_tts import export_model_state
+        model = _get_model()
+        state = model.get_state_for_audio_prompt(str(vp.reference_path()))
+        export_model_state(state, str(_state_path()))
+        _log.info("Voice state exported to %s", _state_path())
+    except Exception as exc:
+        _log.warning("Voice state export failed (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -155,19 +96,14 @@ def reset_voice_prompt() -> None:
 # ---------------------------------------------------------------------------
 
 def warmup_engine() -> None:
-    """Load the Chatterbox Turbo model eagerly.
-
-    Called unconditionally at server startup so the model weights
-    (~700 MB download, ~seconds to init) are ready before any request.
-    Does NOT resolve the voice prompt (that requires a profile).
-    """
+    """Load the Pocket TTS model eagerly at server startup."""
     _get_model()
 
 
 def warmup_cloned() -> None:
-    """Load model + resolve reference path. No-op if no profile exists."""
+    """Load model + resolve voice state. No-op if no profile exists."""
     if vp.exists():
-        get_voice_prompt()
+        get_voice_state()
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +133,10 @@ def _trim_tts_output(
     max_internal_silence_ms: int = 1000,
     fade_ms: int = 30,
 ) -> np.ndarray:
-    """Trim trailing silence and hallucinated noise from Chatterbox output.
+    """Trim trailing silence and hallucinated noise from TTS output.
 
-    Chatterbox Turbo sometimes produces [speech][silence][hallucinated_noise].
-    This detects internal silence gaps > max_internal_silence_ms and cuts there,
-    then trims trailing silence and applies a short cosine fade-out.
+    Detects internal silence gaps > max_internal_silence_ms and cuts there,
+    then trims trailing silence and applies a cosine fade-out.
     """
     frame_len = int(sample_rate * frame_ms / 1000)
     if frame_len == 0 or len(audio) < frame_len:
@@ -255,14 +190,14 @@ def _trim_tts_output(
     return trimmed
 
 
-def _preprocess_reference_audio(
+def preprocess_reference_audio(
     audio: np.ndarray,
     sample_rate: int,
     peak_target: float = 0.95,
     trim_top_db: float = 40.0,
     edge_padding_ms: int = 100,
 ) -> np.ndarray:
-    """Clean up reference audio before passing to voice cloning.
+    """Clean up reference audio before voice cloning.
 
     Removes DC offset, trims leading/trailing silence, and caps peak so a
     slightly-hot recording doesn't distort the cloned voice.
@@ -301,7 +236,6 @@ def _preprocess_reference_audio(
 def _fallback(text: str, out_wav: str) -> None:
     """Synthesize via Piper (non-cloned) — shared fallback path."""
     from .pipeline import synthesize
-
     synthesize(text, out_wav)
 
 
@@ -313,43 +247,38 @@ def synthesize_cloned(text: str, out_wav: str) -> None:
     """Synthesize *text* in the cloned voice and write a 16-bit mono WAV.
 
     Falls back silently to Piper when:
-    * No voice profile is available (no reference audio).
+    * No voice profile is available.
     * The model raises an exception during generation.
 
-    Chatterbox Turbo loads the reference audio from disk at generation time.
-    The output sample rate is 24 kHz (down from LuxTTS's 48 kHz).
+    Pocket TTS uses a pre-computed voice state (loaded from .safetensors
+    when available) to minimize per-call overhead.
     """
-    ref = get_voice_prompt()
-    if ref is None:
+    voice_state = get_voice_state()
+    if voice_state is None:
         _fallback(text, out_wav)
         return
 
     model = _get_model()
-    if model is None:
-        _fallback(text, out_wav)
-        return
-
     try:
-        wav = model.generate(
-            text,
-            audio_prompt_path=ref,
-            temperature=0.8,
-            top_k=1000,
-            top_p=0.95,
-            repetition_penalty=1.2,
-        )
+        wav = model.generate_audio(voice_state, text)
     except Exception as exc:
-        _log.warning("Chatterbox Turbo generation failed: %s", exc)
+        _log.warning("Pocket TTS generation failed: %s", exc)
         _fallback(text, out_wav)
         return
 
-    audio: np.ndarray = wav.squeeze().cpu().numpy().astype(np.float32)
-    audio = _trim_tts_output(audio, sample_rate=_MODEL_SAMPLE_RATE)
+    # generate_audio returns a 1-D torch tensor
+    if hasattr(wav, "numpy"):
+        audio = wav.squeeze().numpy().astype(np.float32)
+    else:
+        audio = np.asarray(wav, dtype=np.float32).squeeze()
+
+    sr: int = getattr(model, "sample_rate", 24000)
+    audio = _trim_tts_output(audio, sample_rate=sr)
     audio = _normalize_audio(audio, target_db=-20.0, peak_limit=0.85)
 
     with wave.open(out_wav, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)  # 16-bit
-        wf.setframerate(_MODEL_SAMPLE_RATE)
+        wf.setframerate(sr)
         pcm = (audio * 32767).clip(-32768, 32767).astype(np.int16)
         wf.writeframes(pcm.tobytes())

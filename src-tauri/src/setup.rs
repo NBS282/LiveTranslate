@@ -451,7 +451,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         85,
     )?;
 
-    // ── Step 3.5: install Chatterbox Turbo voice-cloning engine (optional) ────
+    // ── Step 3.5: install Pocket TTS voice-cloning engine (optional) ─────────
     // Voice cloning is an opt-in feature, so this install is best-effort: if it
     // fails (e.g. a transitive dep that pip can't resolve), the core app still
     // works with Piper. We surface the failure as a progress note instead of
@@ -462,13 +462,13 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         86,
         "Optional — enables cloning your own voice…",
     );
-    if let Err(e) = run_pip(app, &python, &["install", "chatterbox-tts"], 86, 88) {
+    if let Err(e) = run_pip(app, &python, &["install", "pocket-tts"], 86, 88) {
         emit_progress(
             app,
             "Voice cloning unavailable",
             88,
             &format!(
-                "Optional engine skipped (chatterbox-tts): {e}. The app works with the standard voice."
+                "Optional engine skipped (pocket-tts): {e}. The app works with the standard voice."
             ),
         );
     }
@@ -553,18 +553,18 @@ except Exception as e:
     print(f"ERROR [Parakeet]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     sys.exit(1)
 
-# Voice cloning (Chatterbox Turbo) is OPTIONAL — never abort setup if it is
+# Voice cloning (Pocket TTS) is OPTIONAL — never abort setup if it is
 # missing or fails to download. Loading the model here pre-fetches exactly
 # the files the runtime server will use, so the first cloned synthesis has
 # no download cost.
-print("(3/3) Downloading Chatterbox Turbo model (optional, ~700 MB)...", flush=True)
+print("(3/3) Downloading Pocket TTS model (optional, ~200 MB)...", flush=True)
 try:
-    from huggingface_hub import snapshot_download
-    snapshot_download("ResembleAI/chatterbox-turbo")
-    print("Chatterbox Turbo model cached.", flush=True)
+    from pocket_tts import TTSModel
+    TTSModel.load_model()
+    print("Pocket TTS model cached.", flush=True)
 except Exception as e:
     # Best-effort: log and continue. The app falls back to the standard voice.
-    print(f"WARN [Chatterbox Turbo optional]: {type(e).__name__}: {e}", flush=True)
+    print(f"WARN [Pocket TTS optional]: {type(e).__name__}: {e}", flush=True)
 "#,
         91,
         &[

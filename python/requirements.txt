@@ -11,5 +11,5 @@ piper-tts
 fastapi[standard]
 uvicorn[standard]
 soundfile
-# Chatterbox Turbo — zero-shot voice cloning (350M, MIT, CPU-friendly)
-chatterbox-tts
+# Pocket TTS — zero-shot voice cloning (100M, MIT, ~200ms first chunk on CPU)
+pocket-tts
