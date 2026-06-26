@@ -398,8 +398,10 @@ fn run_producer(
     // VAD cadence: ~240ms trailing silence closes a phrase (8 * 30ms),
     // ~240ms minimum voiced (8 * 30ms) to emit. Lower silence = more responsive,
     // but too low risks cutting mid-phrase. Tune here.
-    // silence_close=8 (~240ms), min_voiced=8 (~240ms), max_frames=167 (~5s force cut)
-    let mut segmenter = Segmenter::new(8, 8, 167);
+    // silence_close=8 (~240ms), min_voiced=8 (~240ms), max_frames=267 (~8s force cut).
+    // 8s (was 5s) so a normal long sentence isn't force-cut mid-phrase before the
+    // speaker's natural pause closes it — the 5s cap clipped the end of >5s phrases.
+    let mut segmenter = Segmenter::new(8, 8, 267);
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
 
     // Channel from the cpal callback (runs on an OS audio thread) to our loop below.

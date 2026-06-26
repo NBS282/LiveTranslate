@@ -28,15 +28,53 @@ function setCloneEnabled(on: boolean): void {
   cloneToggle.setAttribute("aria-checked", on ? "true" : "false");
 }
 
+// Optimistic hint, persisted across launches: did we ever save a cloned voice?
+// Lets us show "preparing" immediately on open instead of a confusing "generic"
+// flash while the engine is still loading. The server is the source of truth and
+// reconciles this flag once it responds.
+function hasStoredProfile(): boolean {
+  return localStorage.getItem("lt.hasClonedVoice") === "1";
+}
+
+function setStoredProfile(on: boolean): void {
+  localStorage.setItem("lt.hasClonedVoice", on ? "1" : "0");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ── Status ────────────────────────────────────────────────────────────────────
 
+function setPreparing(): void {
+  statusLabel.textContent = "Preparando voz clonada…";
+  cloneToggle.disabled = true;
+  deleteBtn.classList.add("hidden");
+}
+
 export async function loadVoiceStatus(): Promise<void> {
-  try {
-    const exists = await invoke<boolean>("get_voice_profile_status");
-    updateUI(exists);
-  } catch {
-    updateUI(false);
+  // The Python server answers no request until model warmup finishes, so a
+  // successful status response means the cloned voice is genuinely ready to use.
+  // While the engine loads, keep the toggle disabled: show "preparing" if we
+  // know a voice was saved before, otherwise leave the default generic state.
+  if (hasStoredProfile()) setPreparing();
+
+  // Poll until the engine responds — warmup can take minutes on first launch.
+  // 150 attempts * 2s ≈ 5 min, comfortably beyond a normal cold start.
+  for (let attempt = 0; attempt < 150; attempt++) {
+    try {
+      const exists = await invoke<boolean>("get_voice_profile_status");
+      updateUI(exists);
+      setStoredProfile(exists);
+      return;
+    } catch {
+      await sleep(2000);
+    }
   }
+
+  // Engine never came up. Leave the stored flag untouched so a later reload can
+  // still detect the profile; just fall back to the generic state for now.
+  updateUI(false);
 }
 
 function updateUI(profileExists: boolean): void {
@@ -67,6 +105,7 @@ deleteBtn.addEventListener("click", async () => {
   try {
     await invoke("delete_voice_profile");
     updateUI(false);
+    setStoredProfile(false);
   } catch (err) {
     console.error("delete voice profile failed:", err);
   }
@@ -135,6 +174,7 @@ stopRecBtn.addEventListener("click", async () => {
     await invoke("upload_voice_profile", { audioData });
     recStatusEl.textContent = "¡Voz guardada!";
     updateUI(true);
+    setStoredProfile(true);
     setTimeout(() => modal.classList.add("hidden"), 1200);
   } catch (err) {
     recStatusEl.textContent = `Error: ${err}`;

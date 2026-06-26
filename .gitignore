@@ -1,6 +1,9 @@
 # Tooling cache
 .atl/
 
+# Voice cloning — user's recorded voice sample (private, runtime data)
+voice_profile/
+
 # Rust / Tauri
 /target/
 **/target/

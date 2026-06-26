@@ -83,9 +83,11 @@ def warmup() -> None:
     _get_asr()
     _get_mt()
     _get_piper()
-    # Pre-load LuxTTS + encode reference only if a profile already exists.
-    from .cloned_tts import warmup_cloned
-    warmup_cloned()
+    # Pre-load Chatterbox Turbo model eagerly so the model weights are
+    # cached in RAM and the first synthesize_cloned call has zero extra
+    # latency. Model download + init is ~seconds.
+    from .cloned_tts import warmup_engine
+    warmup_engine()
 
 
 def translate_audio(
@@ -102,8 +104,8 @@ def translate_audio(
         out_dir: Directory where output.wav will be written.
         src: Unused — model is ES->EN only, kept for API compatibility.
         tgt: Unused — model is ES->EN only, kept for API compatibility.
-        use_cloned_voice: If True and a voice profile exists, use LuxTTS
-            instead of Piper for synthesis.
+        use_cloned_voice: If True and a voice profile exists, use Chatterbox
+            Turbo instead of Piper for synthesis.
 
     Returns:
         dict with keys: output_wav, source_text, translated_text.

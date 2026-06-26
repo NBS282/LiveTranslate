@@ -1,4 +1,5 @@
 """Persistent FastAPI translation server. Loads models once at startup. Binds 127.0.0.1 only."""
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -59,21 +60,16 @@ def get_voice_profile() -> dict:
 
 @app.post("/voice-profile")
 async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
-    """Save reference audio and encode the voice prompt for future synthesis."""
+    """Save reference audio for voice cloning.
+
+    Chatterbox Turbo loads the reference audio from disk at generation
+    time — no separate prompt encoding step needed.
+    """
     audio_bytes = await file.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio file")
     vp.save(audio_bytes)
-    # Encode reference eagerly so the first translate call has zero extra latency.
-    try:
-        from .cloned_tts import get_voice_prompt
-        reset_voice_prompt()  # clear any stale cached prompt
-        get_voice_prompt()    # encode and cache the new reference
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        vp.delete()  # remove partial state so GET /voice-profile returns exists=false
-        raise HTTPException(status_code=500, detail=f"voice encoding failed: {e}")
+    reset_voice_prompt()  # clear any stale cached path
     return {"exists": True}
 
 

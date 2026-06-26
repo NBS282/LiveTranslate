@@ -163,6 +163,7 @@ window.addEventListener("keydown", async (e) => {
     try {
       await invoke("register_ptt_shortcut", { shortcutStr });
       pttShortcut = shortcutStr;
+      localStorage.setItem("lt.pttShortcut", shortcutStr);
       shortcutDisplay.textContent = shortcutStr;
       shortcutDisplay.classList.remove("capturing");
       isCapturingShortcut = false;
@@ -277,6 +278,26 @@ toggle.addEventListener("click", async () => {
   }
 });
 
+// ── Restore persisted PTT shortcut ─────────────────────────────────────────────
+// The shortcut is registered in the Rust global-shortcut layer, which does not
+// survive an app restart. Re-register the saved combo and restore the display so
+// the user doesn't have to set it again every launch.
+
+async function restorePttShortcut(): Promise<void> {
+  const saved = localStorage.getItem("lt.pttShortcut");
+  if (!saved) return;
+  try {
+    await invoke("register_ptt_shortcut", { shortcutStr: saved });
+    pttShortcut = saved;
+    shortcutDisplay.textContent = saved;
+    captureBtn.setAttribute("data-shortcut-registered", "true");
+  } catch (err) {
+    // The combo may now be taken by another app — drop it so the UI is honest.
+    console.error("restore PTT shortcut failed:", err);
+    localStorage.removeItem("lt.pttShortcut");
+  }
+}
+
 // ── Window close cleanup ───────────────────────────────────────────────────────
 
 window.addEventListener("beforeunload", () => {
@@ -286,3 +307,4 @@ window.addEventListener("beforeunload", () => {
 });
 
 void loadDevices();
+void restorePttShortcut();

@@ -451,32 +451,25 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         85,
     )?;
 
-    // ── Step 3.5: install LuxTTS voice-cloning engine (optional) ──────────────
+    // ── Step 3.5: install Chatterbox Turbo voice-cloning engine (optional) ────
     // Voice cloning is an opt-in feature, so this install is best-effort: if it
-    // fails (e.g. no git on PATH for the git+ dependency, or a transitive dep
-    // that pip can't resolve), the core app still works with Piper. We surface
-    // the failure as a progress note instead of aborting setup.
+    // fails (e.g. a transitive dep that pip can't resolve), the core app still
+    // works with Piper. We surface the failure as a progress note instead of
+    // aborting setup.
     emit_progress(
         app,
         "Installing voice cloning engine",
         86,
         "Optional — enables cloning your own voice…",
     );
-    if let Err(e) = run_pip(
-        app,
-        &python,
-        &[
-            "install",
-            "Zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git",
-        ],
-        86,
-        88,
-    ) {
+    if let Err(e) = run_pip(app, &python, &["install", "chatterbox-tts"], 86, 88) {
         emit_progress(
             app,
             "Voice cloning unavailable",
             88,
-            &format!("Optional engine skipped: {e}. The app works with the standard voice."),
+            &format!(
+                "Optional engine skipped (chatterbox-tts): {e}. The app works with the standard voice."
+            ),
         );
     }
 
@@ -497,15 +490,10 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         app,
         "Downloading translation models",
         91,
-        "~1.5 GB — first-time download, please wait…",
+        "~2.1 GB — first-time download, please wait…",
     );
-    // Resolve the CPU thread count once so the LuxTTS pre-download below uses the
-    // same loader config the runtime server will use (keeps the HF cache layout
-    // identical to runtime, so nothing is re-fetched on first cloned synthesis).
-    let cpu_threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4);
-    let cpu_threads_str = cpu_threads.to_string();
+    // Chatterbox Turbo pre-download uses snapshot_download (no CPU thread config
+    // needed, unlike the old LuxTTS).
     let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
     // Create nemo sub-dir before the script runs so it doesn't hit a permissions
     // error the first time it tries to write there.
@@ -565,18 +553,18 @@ except Exception as e:
     print(f"ERROR [Parakeet]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     sys.exit(1)
 
-# Voice cloning (LuxTTS) is OPTIONAL — never abort setup if it is missing or
-# fails to download. Loading the model here pre-fetches exactly the files the
-# runtime server will use, so the first cloned synthesis has no download cost.
-print("(3/3) Downloading LuxTTS voice-cloning model (optional, ~1.2 GB)...", flush=True)
+# Voice cloning (Chatterbox Turbo) is OPTIONAL — never abort setup if it is
+# missing or fails to download. Loading the model here pre-fetches exactly
+# the files the runtime server will use, so the first cloned synthesis has
+# no download cost.
+print("(3/3) Downloading Chatterbox Turbo model (optional, ~700 MB)...", flush=True)
 try:
-    threads = int(os.environ.get("LT_CPU_THREADS", "4"))
-    from zipvoice.luxvoice import LuxTTS
-    LuxTTS(model_path="YatharthS/LuxTTS", device="cpu", threads=threads)
-    print("LuxTTS model ready.", flush=True)
+    from huggingface_hub import snapshot_download
+    snapshot_download("ResembleAI/chatterbox-turbo")
+    print("Chatterbox Turbo model cached.", flush=True)
 except Exception as e:
     # Best-effort: log and continue. The app falls back to the standard voice.
-    print(f"WARN [LuxTTS optional]: {type(e).__name__}: {e}", flush=True)
+    print(f"WARN [Chatterbox Turbo optional]: {type(e).__name__}: {e}", flush=True)
 "#,
         91,
         &[
@@ -584,7 +572,6 @@ except Exception as e:
             ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
             ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
             ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
-            ("LT_CPU_THREADS", cpu_threads_str.as_str()),
         ],
     )?;
 
