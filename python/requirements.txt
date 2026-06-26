@@ -11,3 +11,5 @@ piper-tts
 fastapi[standard]
 uvicorn[standard]
 soundfile
+# LuxTTS — zero-shot voice cloning (ONNX int8, CPU-first)
+Zipvoice @ git+https://github.com/ysharma3501/LuxTTS.git
