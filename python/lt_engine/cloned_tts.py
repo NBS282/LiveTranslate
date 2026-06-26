@@ -171,15 +171,127 @@ def warmup_cloned() -> None:
 
 
 # ---------------------------------------------------------------------------
-# RMS normalisation
+# Audio post-processing (ported from voicebox reference implementation)
 # ---------------------------------------------------------------------------
 
-def _normalize_rms(audio: np.ndarray, target_rms: float = 0.1) -> np.ndarray:
-    """Normalise *audio* so its RMS equals *target_rms* (no-op if silent)."""
-    rms = np.sqrt(np.mean(np.square(audio)))
-    if rms < 1e-6:  # effectively silent — leave as-is
+def _normalize_audio(
+    audio: np.ndarray,
+    target_db: float = -20.0,
+    peak_limit: float = 0.85,
+) -> np.ndarray:
+    """Normalize to target loudness (dB RMS) with peak limiting."""
+    audio = audio.astype(np.float32)
+    rms = np.sqrt(np.mean(audio ** 2))
+    if rms > 0:
+        target_rms = 10 ** (target_db / 20)
+        audio = audio * (target_rms / rms)
+    return np.clip(audio, -peak_limit, peak_limit)
+
+
+def _trim_tts_output(
+    audio: np.ndarray,
+    sample_rate: int = 24000,
+    frame_ms: int = 20,
+    silence_threshold_db: float = -40.0,
+    min_silence_ms: int = 200,
+    max_internal_silence_ms: int = 1000,
+    fade_ms: int = 30,
+) -> np.ndarray:
+    """Trim trailing silence and hallucinated noise from Chatterbox output.
+
+    Chatterbox Turbo sometimes produces [speech][silence][hallucinated_noise].
+    This detects internal silence gaps > max_internal_silence_ms and cuts there,
+    then trims trailing silence and applies a short cosine fade-out.
+    """
+    frame_len = int(sample_rate * frame_ms / 1000)
+    if frame_len == 0 or len(audio) < frame_len:
         return audio
-    return audio * (target_rms / rms)
+
+    n_frames = len(audio) // frame_len
+    threshold_linear = 10 ** (silence_threshold_db / 20)
+
+    rms = np.array(
+        [
+            np.sqrt(np.mean(audio[i * frame_len : (i + 1) * frame_len] ** 2))
+            for i in range(n_frames)
+        ]
+    )
+    is_speech = rms >= threshold_linear
+
+    first_speech = 0
+    for i, s in enumerate(is_speech):
+        if s:
+            first_speech = max(0, i - 1)
+            break
+
+    max_silence_frames = int(max_internal_silence_ms / frame_ms)
+    consecutive_silence = 0
+    cut_frame = n_frames
+
+    for i in range(first_speech, n_frames):
+        if is_speech[i]:
+            consecutive_silence = 0
+        else:
+            consecutive_silence += 1
+            if consecutive_silence >= max_silence_frames:
+                cut_frame = i - consecutive_silence + 1
+                break
+
+    min_silence_frames = int(min_silence_ms / frame_ms)
+    end_frame = cut_frame
+    while end_frame > first_speech and not is_speech[end_frame - 1]:
+        end_frame -= 1
+    end_frame = min(end_frame + min_silence_frames, cut_frame)
+
+    start_sample = first_speech * frame_len
+    end_sample = min(end_frame * frame_len, len(audio))
+    trimmed = audio[start_sample:end_sample].copy()
+
+    fade_samples = int(sample_rate * fade_ms / 1000)
+    if fade_samples > 0 and len(trimmed) > fade_samples:
+        fade = np.cos(np.linspace(0, np.pi / 2, fade_samples)) ** 2
+        trimmed[-fade_samples:] *= fade
+
+    return trimmed
+
+
+def _preprocess_reference_audio(
+    audio: np.ndarray,
+    sample_rate: int,
+    peak_target: float = 0.95,
+    trim_top_db: float = 40.0,
+    edge_padding_ms: int = 100,
+) -> np.ndarray:
+    """Clean up reference audio before passing to voice cloning.
+
+    Removes DC offset, trims leading/trailing silence, and caps peak so a
+    slightly-hot recording doesn't distort the cloned voice.
+    """
+    try:
+        import librosa
+    except ImportError:
+        return audio.astype(np.float32)
+
+    audio = audio.astype(np.float32, copy=False)
+    if audio.size == 0:
+        return audio
+
+    audio = audio - float(np.mean(audio))
+
+    trimmed, _ = librosa.effects.trim(audio, top_db=trim_top_db)
+    if 0 < trimmed.size < audio.size:
+        pad_each = int(sample_rate * edge_padding_ms / 1000)
+        headroom = (audio.size - trimmed.size) // 2
+        pad = min(pad_each, max(headroom, 0))
+        if pad > 0:
+            trimmed = np.pad(trimmed, (pad, pad), mode="constant")
+        audio = trimmed
+
+    peak = float(np.abs(audio).max())
+    if peak > peak_target and peak > 0:
+        audio = audio * (peak_target / peak)
+
+    return audio
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +344,8 @@ def synthesize_cloned(text: str, out_wav: str) -> None:
         return
 
     audio: np.ndarray = wav.squeeze().cpu().numpy().astype(np.float32)
-    audio = _normalize_rms(audio, target_rms=0.1)
+    audio = _trim_tts_output(audio, sample_rate=_MODEL_SAMPLE_RATE)
+    audio = _normalize_audio(audio, target_db=-20.0, peak_limit=0.85)
 
     with wave.open(out_wav, "wb") as wf:
         wf.setnchannels(1)

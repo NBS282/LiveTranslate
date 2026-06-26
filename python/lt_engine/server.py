@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from .pipeline import translate_audio, warmup
 from . import voice_profile as vp
-from .cloned_tts import reset_voice_prompt
+from .cloned_tts import reset_voice_prompt, _preprocess_reference_audio
 
 
 @asynccontextmanager
@@ -69,6 +69,24 @@ async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio file")
     vp.save(audio_bytes)
+
+    # Preprocess the reference audio to improve voice cloning quality:
+    # removes DC offset, trims silence edges, and normalizes peak.
+    try:
+        import io
+        import numpy as np
+        import soundfile as sf
+
+        buf = io.BytesIO(audio_bytes)
+        audio, sr = sf.read(buf, dtype="float32", always_2d=False)
+        if audio.ndim == 2:
+            audio = audio.mean(axis=1)
+        cleaned = _preprocess_reference_audio(audio, sr)
+        ref_path = str(vp.reference_path())
+        sf.write(ref_path, cleaned, sr)
+    except Exception:
+        pass  # keep original if preprocessing fails
+
     reset_voice_prompt()  # clear any stale cached path
     return {"exists": True}
 
