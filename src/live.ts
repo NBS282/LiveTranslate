@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { cloneEnabled } from "./voice";
 
 const inputSelect = document.querySelector<HTMLSelectElement>("#live-device")!;
 const outputSelect = document.querySelector<HTMLSelectElement>("#live-output-device")!;
@@ -240,6 +241,7 @@ async function startSession(): Promise<void> {
     await invoke(cmd, {
       deviceName: inputSelect.value,
       outputDeviceName: outputSelect.value,
+      useClonedVoice: cloneEnabled(),
     });
     listening = true;
     setToggle(true);

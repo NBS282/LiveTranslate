@@ -297,6 +297,31 @@
           </div>
         </div>
 
+        <!-- Voice panel -->
+        <div class="panel">
+          <span class="panel-title">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            Voz de salida
+          </span>
+          <div class="voice-row">
+            <div class="voice-info">
+              <span id="voice-status-label" class="voice-sub">Genérica (Piper)</span>
+            </div>
+            <div class="voice-controls">
+              <button id="btn-record-voice" class="btn-secondary btn-sm">Grabar muestra</button>
+              <button id="btn-delete-voice" class="btn-secondary btn-sm hidden" title="Eliminar voz clonada">Restablecer</button>
+              <button
+                id="voice-clone-toggle"
+                role="switch"
+                aria-checked="false"
+                class="switch"
+                title="Usar voz clonada"
+                disabled
+              ><span class="switch-knob"></span></button>
+            </div>
+          </div>
+        </div>
+
         <!-- Toggle -->
         <button id="live-toggle" class="btn-toggle">
           <span class="toggle-icon">▶</span>
@@ -310,6 +335,21 @@
             <span>Traducciones</span>
           </div>
           <ul id="phrases"></ul>
+        </div>
+      </div>
+
+      <!-- Voice recording modal -->
+      <div id="voice-record-modal" class="modal hidden">
+        <div class="modal-content">
+          <h3>Grabar muestra de voz</h3>
+          <p class="modal-hint">Hablá con naturalidad durante 10–30 segundos. La muestra se usa solo para clonar tu voz localmente.</p>
+          <div id="voice-record-timer" class="record-timer">0s</div>
+          <div class="modal-actions">
+            <button id="btn-start-recording" class="btn-primary">Empezar a grabar</button>
+            <button id="btn-stop-recording" class="btn-primary hidden">Detener y guardar</button>
+            <button id="btn-cancel-recording" class="btn-secondary">Cancelar</button>
+          </div>
+          <p id="voice-record-status" class="status-hint"></p>
         </div>
       </div>
     </section>
