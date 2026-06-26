@@ -212,6 +212,7 @@ fn run_worker(
     app: AppHandle,
     stop: Arc<AtomicBool>,
     play_tx: Sender<PathBuf>,
+    use_cloned_voice: bool,
 ) {
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
@@ -224,26 +225,33 @@ fn run_worker(
                 }
 
                 // PTT diag: emit event so frontend can show producer→worker flow.
-                let _ = app.emit("ptt-diag", serde_json::json!({
-                    "event": "worker-received",
-                    "samples": samples.len(),
-                    "duration_s": samples.len() as f64 / 16_000.0,
-                }));
+                let _ = app.emit(
+                    "ptt-diag",
+                    serde_json::json!({
+                        "event": "worker-received",
+                        "samples": samples.len(),
+                        "duration_s": samples.len() as f64 / 16_000.0,
+                    }),
+                );
 
                 // Defense-in-depth: discard segments shorter than 0.5s (8000 samples at 16 kHz).
                 // Whisper hallucinates or returns no text on very short clips; the VAD
                 // min-voiced guard is the first line of defense, this is the fallback.
                 if samples.len() < MIN_SEGMENT_SAMPLES {
-                    let _ = app.emit("ptt-diag", serde_json::json!({
-                        "event": "worker-discarded-too-short",
-                        "samples": samples.len(),
-                        "min": MIN_SEGMENT_SAMPLES,
-                    }));
+                    let _ = app.emit(
+                        "ptt-diag",
+                        serde_json::json!({
+                            "event": "worker-discarded-too-short",
+                            "samples": samples.len(),
+                            "min": MIN_SEGMENT_SAMPLES,
+                        }),
+                    );
                     continue;
                 }
 
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
-                    let result = crate::translation::engine_server::translate(&p);
+                    let result =
+                        crate::translation::engine_server::translate_ex(&p, use_cloned_voice);
                     let _ = std::fs::remove_file(&p);
                     result
                 });
@@ -251,10 +259,13 @@ fn run_worker(
                 // 422 "transcription produced no text" means Whisper got audio but found
                 // no speech — silence, breath, or mic bleed. Skip the event silently.
                 if let Err(ref e) = translate_result {
-                    let _ = app.emit("ptt-diag", serde_json::json!({
-                        "event": "translate-error",
-                        "error": e,
-                    }));
+                    let _ = app.emit(
+                        "ptt-diag",
+                        serde_json::json!({
+                            "event": "translate-error",
+                            "error": e,
+                        }),
+                    );
                     if e.contains("transcription produced no text") {
                         continue;
                     }
@@ -267,10 +278,13 @@ fn run_worker(
                     if out.source_text.trim().to_lowercase()
                         == out.translated_text.trim().to_lowercase()
                     {
-                        let _ = app.emit("ptt-diag", serde_json::json!({
-                            "event": "skipped-source-equals-target",
-                            "source": out.source_text,
-                        }));
+                        let _ = app.emit(
+                            "ptt-diag",
+                            serde_json::json!({
+                                "event": "skipped-source-equals-target",
+                                "source": out.source_text,
+                            }),
+                        );
                         continue;
                     }
                 }
@@ -308,6 +322,7 @@ pub fn start(
     device_name: &str,
     output_device_name: &str,
     app: AppHandle,
+    use_cloned_voice: bool,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -351,7 +366,9 @@ pub fn start(
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
-        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, play_tx));
+        std::thread::spawn(move || {
+            run_worker(seg_rx, app_clone, stop_clone, play_tx, use_cloned_voice)
+        });
     }
 
     // Producer thread: capture → resample → VAD → segment → send.
@@ -537,6 +554,7 @@ pub fn start_ptt(
     output_device_name: &str,
     app: AppHandle,
     ptt_recording: Arc<AtomicBool>,
+    use_cloned_voice: bool,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -575,7 +593,9 @@ pub fn start_ptt(
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
-        std::thread::spawn(move || run_worker(seg_rx, app_clone, stop_clone, play_tx));
+        std::thread::spawn(move || {
+            run_worker(seg_rx, app_clone, stop_clone, play_tx, use_cloned_voice)
+        });
     }
 
     let stop_prod = stop.clone();

@@ -197,13 +197,19 @@ fn shutdown_engine(app: &tauri::AppHandle) {
 async fn start_live_translation(
     device_name: String,
     output_device_name: String,
+    use_cloned_voice: bool,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     // Run on a blocking thread so the engine readiness wait never freezes the UI.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         ensure_server_running(&app, &state)?;
-        let session = translation::live::start(&device_name, &output_device_name, app.clone())?;
+        let session = translation::live::start(
+            &device_name,
+            &output_device_name,
+            app.clone(),
+            use_cloned_voice,
+        )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
     })
@@ -273,9 +279,25 @@ fn download_piper_voice(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_voice_profile_status() -> Result<bool, String> {
+    translation::engine_server::voice_profile_exists()
+}
+
+#[tauri::command]
+fn upload_voice_profile(audio_data: Vec<u8>) -> Result<(), String> {
+    translation::engine_server::upload_voice_profile(&audio_data)
+}
+
+#[tauri::command]
+fn delete_voice_profile() -> Result<(), String> {
+    translation::engine_server::delete_voice_profile()
+}
+
+#[tauri::command]
 async fn start_live_translation_ptt(
     device_name: String,
     output_device_name: String,
+    use_cloned_voice: bool,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -286,8 +308,13 @@ async fn start_live_translation_ptt(
             .ptt_recording
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let ptt_rec = state.ptt_recording.clone();
-        let session =
-            translation::live::start_ptt(&device_name, &output_device_name, app.clone(), ptt_rec)?;
+        let session = translation::live::start_ptt(
+            &device_name,
+            &output_device_name,
+            app.clone(),
+            ptt_rec,
+            use_cloned_voice,
+        )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
     })
@@ -447,6 +474,9 @@ pub fn run() {
             warm_engine,
             check_vbcable,
             download_piper_voice,
+            get_voice_profile_status,
+            upload_voice_profile,
+            delete_voice_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
