@@ -125,7 +125,11 @@ stopRecBtn.addEventListener("click", async () => {
 
   const blob = new Blob(recordedChunks, { type: "audio/webm" });
   const arrayBuffer = await blob.arrayBuffer();
-  const audioData = Array.from(new Uint8Array(arrayBuffer));
+  const audioCtx = new AudioContext();
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  void audioCtx.close();
+  const wavBytes = encodeWavPcm16Mono(audioBuffer);
+  const audioData = Array.from(wavBytes);
 
   try {
     await invoke("upload_voice_profile", { audioData });
@@ -159,6 +163,66 @@ function clearTimerInterval(): void {
     clearInterval(timerInterval);
     timerInterval = null;
   }
+}
+
+// ── WAV encoder ──────────────────────────────────────────────────────────────
+
+function encodeWavPcm16Mono(audioBuffer: AudioBuffer): Uint8Array {
+  const numCh = audioBuffer.numberOfChannels;
+  const len = audioBuffer.length;
+  const sampleRate = audioBuffer.sampleRate;
+
+  // Downmix all channels to mono by averaging samples.
+  const mono = new Float32Array(len);
+  for (let ch = 0; ch < numCh; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      mono[i] += data[i] / numCh;
+    }
+  }
+
+  const bytesPerSample = 2; // 16-bit PCM
+  const blockAlign = bytesPerSample; // mono: 1 channel * 2 bytes
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = len * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let off = 0;
+
+  const writeStr = (s: string): void => {
+    for (let i = 0; i < s.length; i++) {
+      view.setUint8(off++, s.charCodeAt(i));
+    }
+  };
+
+  // RIFF chunk
+  writeStr("RIFF");
+  view.setUint32(off, 36 + dataSize, true); off += 4;
+  writeStr("WAVE");
+
+  // fmt sub-chunk
+  writeStr("fmt ");
+  view.setUint32(off, 16, true); off += 4;      // sub-chunk size
+  view.setUint16(off, 1, true); off += 2;       // PCM format
+  view.setUint16(off, 1, true); off += 2;       // mono
+  view.setUint32(off, sampleRate, true); off += 4;
+  view.setUint32(off, byteRate, true); off += 4;
+  view.setUint16(off, blockAlign, true); off += 2;
+  view.setUint16(off, 16, true); off += 2;      // bits per sample
+
+  // data sub-chunk
+  writeStr("data");
+  view.setUint32(off, dataSize, true); off += 4;
+
+  // PCM samples: float → 16-bit signed little-endian
+  for (let i = 0; i < len; i++) {
+    const samp: number = mono[i] ?? 0;
+    const s = Math.max(-1, Math.min(1, samp));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+
+  return new Uint8Array(buffer);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

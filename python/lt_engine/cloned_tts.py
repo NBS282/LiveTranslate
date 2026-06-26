@@ -17,6 +17,7 @@ from . import voice_profile as vp
 _luxtts = None
 _voice_prompt: dict | None = None
 _luxtts_lock = threading.Lock()
+_prompt_lock = threading.Lock()
 
 
 def _get_luxtts():
@@ -43,14 +44,17 @@ def get_voice_prompt() -> dict | None:
     """Return cached voice prompt, encoding on first call if profile exists."""
     global _voice_prompt
     if _voice_prompt is None and vp.exists():
-        _voice_prompt = _encode_reference()
+        with _prompt_lock:
+            if _voice_prompt is None:  # double-checked locking
+                _voice_prompt = _encode_reference()
     return _voice_prompt
 
 
 def reset_voice_prompt() -> None:
     """Clear the cached voice prompt (call after profile deletion)."""
     global _voice_prompt
-    _voice_prompt = None
+    with _prompt_lock:
+        _voice_prompt = None
 
 
 def warmup_cloned() -> None:

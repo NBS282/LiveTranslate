@@ -301,7 +301,7 @@ pub fn upload_voice_profile(audio_bytes: &[u8]) -> Result<(), String> {
     let resp = client
         .post(format!("{}/voice-profile", base_url()))
         .multipart(form)
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(600))
         .send()
         .map_err(|e| format!("upload request failed: {e}"))?;
     if !resp.status().is_success() {

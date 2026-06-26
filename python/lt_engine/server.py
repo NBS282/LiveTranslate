@@ -72,6 +72,7 @@ async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
     except Exception as e:
         import traceback
         traceback.print_exc()
+        vp.delete()  # remove partial state so GET /voice-profile returns exists=false
         raise HTTPException(status_code=500, detail=f"voice encoding failed: {e}")
     return {"exists": True}
 
