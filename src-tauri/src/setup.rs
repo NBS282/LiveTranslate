@@ -572,6 +572,7 @@ except Exception as e:
             ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
             ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
             ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
+            ("HF_TOKEN", "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"),
         ],
     )?;
 

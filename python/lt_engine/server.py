@@ -98,3 +98,15 @@ def delete_voice_profile() -> dict:
     vp.delete()
     reset_voice_state()
     return {"exists": False}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("LT_ENGINE_PORT", "8765"))
+    uvicorn.run(
+        "lt_engine.server:app",
+        host="127.0.0.1",
+        port=port,
+        log_level="info",
+    )
