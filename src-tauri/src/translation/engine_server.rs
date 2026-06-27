@@ -122,7 +122,7 @@ pub fn spawn_server() -> Result<Child, String> {
         .env("TRANSFORMERS_CACHE", &hf_cache)
         .env("NEMO_CACHE_DIR", &nemo_cache)
         .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-        .env("HF_TOKEN", "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")
+        .env("HF_TOKEN", option_env!("HF_TOKEN").unwrap_or(""))
         .stderr(Stdio::piped());
 
     // Only set current_dir when the directory exists. On Windows, an invalid
