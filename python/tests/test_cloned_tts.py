@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock
 import numpy as np
-import pytest
 
 
 # ── Packaging ───────────────────────────────────────────────────────────────
@@ -60,7 +59,8 @@ class TestClonedTTS:
         def fake_fallback(text, out_wav):
             nonlocal fallback_called
             fallback_called = True
-            import struct, wave
+            import struct
+            import wave
 
             with wave.open(out_wav, "wb") as wf:
                 wf.setnchannels(1)
@@ -110,7 +110,8 @@ class TestClonedTTS:
         def fake_fallback(text, out_wav):
             nonlocal fallback_called
             fallback_called = True
-            import struct, wave
+            import struct
+            import wave
 
             with wave.open(out_wav, "wb") as wf:
                 wf.setnchannels(1)
