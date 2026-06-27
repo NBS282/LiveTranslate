@@ -9,6 +9,7 @@ generation loads from .safetensors (fast) instead of reprocessing the WAV.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import wave
 import numpy as np
@@ -229,6 +230,27 @@ def preprocess_reference_audio(
 
 
 # ---------------------------------------------------------------------------
+# Sentence splitting
+# ---------------------------------------------------------------------------
+
+_SENTENCE_RE = re.compile(r"[^.!?]+(?:[.!?]+|$)")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split *text* into sentences on . ! ? boundaries.
+
+    Falls back to the whole text as a single sentence when no boundary is
+    found. Empty fragments are dropped.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    parts = [m.group().strip() for m in _SENTENCE_RE.finditer(text)]
+    parts = [p for p in parts if p]
+    return parts or [text]
+
+
+# ---------------------------------------------------------------------------
 # Fallback
 # ---------------------------------------------------------------------------
 
@@ -258,21 +280,42 @@ def synthesize_cloned(text: str, out_wav: str) -> None:
         return
 
     model = _get_model()
+    sr: int = getattr(model, "sample_rate", 24000)
+
+    # Generate one sentence at a time. Pocket TTS groups several sentences into a
+    # single chunk when they fit under its token budget, and in that case the
+    # autoregressive decoder emits EOS early and truncates the tail (the last
+    # sentence is dropped). Splitting ourselves guarantees each sentence is
+    # generated to completion; we then concatenate with a short pause.
+    sentences = _split_sentences(text)
+    pause = np.zeros(int(sr * 0.15), dtype=np.float32)  # 150 ms between sentences
+
+    pieces: list[np.ndarray] = []
     try:
-        wav = model.generate_audio(voice_state, text)
+        for sentence in sentences:
+            wav = model.generate_audio(voice_state, sentence)
+            if hasattr(wav, "numpy"):
+                piece = wav.squeeze().numpy().astype(np.float32)
+            else:
+                piece = np.asarray(wav, dtype=np.float32).squeeze()
+            piece = _trim_tts_output(piece, sample_rate=sr)
+            pieces.append(piece)
     except Exception as exc:
         _log.warning("Pocket TTS generation failed: %s", exc)
         _fallback(text, out_wav)
         return
 
-    # generate_audio returns a 1-D torch tensor
-    if hasattr(wav, "numpy"):
-        audio = wav.squeeze().numpy().astype(np.float32)
-    else:
-        audio = np.asarray(wav, dtype=np.float32).squeeze()
+    if not pieces:
+        _fallback(text, out_wav)
+        return
 
-    sr: int = getattr(model, "sample_rate", 24000)
-    audio = _trim_tts_output(audio, sample_rate=sr)
+    # Join sentences with a short pause between them.
+    joined: list[np.ndarray] = []
+    for i, piece in enumerate(pieces):
+        if i > 0:
+            joined.append(pause)
+        joined.append(piece)
+    audio = np.concatenate(joined)
     audio = _normalize_audio(audio, target_db=-20.0, peak_limit=0.85)
 
     with wave.open(out_wav, "wb") as wf:
