@@ -477,7 +477,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
-    // ── Step 5: pre-cache ML models (MarianMT + Parakeet ASR + LuxTTS) ───────
+    // ── Step 5: pre-cache ML models (MarianMT + Parakeet ASR + Pocket TTS) ───
     // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
     // app data and are never re-downloaded on subsequent launches.
     let hf_cache = crate::translation::sidecar::repo_root()
@@ -492,8 +492,6 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         91,
         "~2.1 GB — first-time download, please wait…",
     );
-    // Chatterbox Turbo pre-download uses snapshot_download (no CPU thread config
-    // needed, unlike the old LuxTTS).
     let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
     // Create nemo sub-dir before the script runs so it doesn't hit a permissions
     // error the first time it tries to write there.
