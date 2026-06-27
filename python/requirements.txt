@@ -11,3 +11,5 @@ piper-tts
 fastapi[standard]
 uvicorn[standard]
 soundfile
+# Pocket TTS — zero-shot voice cloning (100M, MIT, ~200ms first chunk on CPU)
+pocket-tts

@@ -122,6 +122,7 @@ pub fn spawn_server() -> Result<Child, String> {
         .env("TRANSFORMERS_CACHE", &hf_cache)
         .env("NEMO_CACHE_DIR", &nemo_cache)
         .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        .env("HF_TOKEN", option_env!("HF_TOKEN").unwrap_or(""))
         .stderr(Stdio::piped());
 
     // Only set current_dir when the directory exists. On Windows, an invalid
@@ -217,6 +218,106 @@ pub fn translate(input: &Path) -> Result<TranslationOutput, String> {
     }
     let body = resp.text().map_err(|e| e.to_string())?;
     parse_translate_response(&body)
+}
+
+/// Same as `translate` but forwards the `use_cloned_voice` flag to the Python server.
+pub fn translate_ex(input: &Path, use_cloned_voice: bool) -> Result<TranslationOutput, String> {
+    if !input.exists() {
+        return Err(format!("input file not found: {}", input.display()));
+    }
+    let ext_ok = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "wav" | "mp3" | "flac" | "ogg" | "m4a"
+            )
+        })
+        .unwrap_or(false);
+    if !ext_ok {
+        return Err(format!("unsupported audio file type: {}", input.display()));
+    }
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let out_dir = std::env::temp_dir().join(format!(
+        "livetranslate-tr-{}-{}",
+        std::process::id(),
+        unique
+    ));
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/translate", base_url()))
+        .json(&serde_json::json!({
+            "input_path": input.to_string_lossy(),
+            "out_dir": out_dir.to_string_lossy(),
+            "src": "es",
+            "tgt": "en",
+            "use_cloned_voice": use_cloned_voice,
+        }))
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .map_err(|e| format!("translation request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("translation server error {status}: {body}"));
+    }
+    let body = resp.text().map_err(|e| e.to_string())?;
+    parse_translate_response(&body)
+}
+
+/// Returns true if the Python server has a saved voice profile.
+pub fn voice_profile_exists() -> Result<bool, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(format!("{}/voice-profile", base_url()))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .map_err(|e| format!("voice-profile request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("voice-profile status error: {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(body
+        .get("exists")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
+/// Uploads raw audio bytes to the Python server for voice profile creation.
+pub fn upload_voice_profile(audio_bytes: &[u8]) -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/voice-profile", base_url()))
+        .header("Content-Type", "audio/wav")
+        .body(audio_bytes.to_vec())
+        .timeout(std::time::Duration::from_secs(600))
+        .send()
+        .map_err(|e| format!("upload request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("upload failed: {body}"));
+    }
+    Ok(())
+}
+
+/// Deletes the voice profile on the Python server.
+pub fn delete_voice_profile() -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .delete(format!("{}/voice-profile", base_url()))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .map_err(|e| format!("delete request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("delete failed: {body}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

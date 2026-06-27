@@ -83,6 +83,11 @@ def warmup() -> None:
     _get_asr()
     _get_mt()
     _get_piper()
+    # Pre-load Chatterbox Turbo model eagerly so the model weights are
+    # cached in RAM and the first synthesize_cloned call has zero extra
+    # latency. Model download + init is ~seconds.
+    from .cloned_tts import warmup_engine
+    warmup_engine()
 
 
 def translate_audio(
@@ -90,6 +95,7 @@ def translate_audio(
     out_dir: str,
     src: str = "es",
     tgt: str = "en",
+    use_cloned_voice: bool = False,
 ) -> dict:
     """Run the full STT -> MT -> TTS pipeline on a WAV file.
 
@@ -98,6 +104,8 @@ def translate_audio(
         out_dir: Directory where output.wav will be written.
         src: Unused — model is ES->EN only, kept for API compatibility.
         tgt: Unused — model is ES->EN only, kept for API compatibility.
+        use_cloned_voice: If True and a voice profile exists, use Chatterbox
+            Turbo instead of Piper for synthesis.
 
     Returns:
         dict with keys: output_wav, source_text, translated_text.
@@ -113,7 +121,12 @@ def translate_audio(
 
     translated_text = translate(source_text)
     out_wav = os.path.join(out_dir, "output.wav")
-    synthesize(translated_text, out_wav)
+
+    if use_cloned_voice:
+        from .cloned_tts import synthesize_cloned
+        synthesize_cloned(translated_text, out_wav)
+    else:
+        synthesize(translated_text, out_wav)
 
     return {
         "output_wav": out_wav,

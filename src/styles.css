@@ -1171,3 +1171,92 @@ body::-webkit-scrollbar {
 body {
   scrollbar-width: none;
 }
+
+/* ── Voice cloning UI ── */
+.btn-sm {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+}
+.voice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.voice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.voice-sub {
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+.switch:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* ── Voice recording modal ── */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 30, 23, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.modal-content {
+  background: var(--paper);
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(320px, calc(100% - 2rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+}
+.modal-content h3 {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.modal-hint {
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.record-timer {
+  font-size: 2.2rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--es);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.status-hint {
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  min-height: 1.2em;
+  line-height: 1.4;
+}
