@@ -137,13 +137,14 @@ def _trim_tts_output(
     frame_ms: int = 20,
     silence_threshold_db: float = -40.0,
     min_silence_ms: int = 200,
-    max_internal_silence_ms: int = 1000,
     fade_ms: int = 30,
 ) -> np.ndarray:
-    """Trim trailing silence and hallucinated noise from TTS output.
+    """Trim leading and trailing silence from TTS output, then fade out.
 
-    Detects internal silence gaps > max_internal_silence_ms and cuts there,
-    then trims trailing silence and applies a cosine fade-out.
+    NOTE: this deliberately does NOT cut at internal silence gaps. Pocket TTS
+    splits long text into per-sentence chunks and concatenates them, so the
+    pauses between sentences are legitimate content — cutting at the first long
+    gap would drop every sentence after it.
     """
     frame_len = int(sample_rate * frame_ms / 1000)
     if frame_len == 0 or len(audio) < frame_len:
@@ -160,33 +161,18 @@ def _trim_tts_output(
     )
     is_speech = rms >= threshold_linear
 
+    if not is_speech.any():
+        return audio  # all silence — nothing to trim
+
     # Keep ~60 ms before the first detected speech frame so soft onset
     # consonants (s, f, th) that dip below the threshold are not clipped.
     lead_pad_frames = max(1, int(60 / frame_ms))
-    first_speech = 0
-    for i, s in enumerate(is_speech):
-        if s:
-            first_speech = max(0, i - lead_pad_frames)
-            break
+    first_speech = max(0, int(np.argmax(is_speech)) - lead_pad_frames)
 
-    max_silence_frames = int(max_internal_silence_ms / frame_ms)
-    consecutive_silence = 0
-    cut_frame = n_frames
-
-    for i in range(first_speech, n_frames):
-        if is_speech[i]:
-            consecutive_silence = 0
-        else:
-            consecutive_silence += 1
-            if consecutive_silence >= max_silence_frames:
-                cut_frame = i - consecutive_silence + 1
-                break
-
+    # Last frame that contains speech, plus a short trailing silence pad.
+    last_speech = n_frames - 1 - int(np.argmax(is_speech[::-1]))
     min_silence_frames = int(min_silence_ms / frame_ms)
-    end_frame = cut_frame
-    while end_frame > first_speech and not is_speech[end_frame - 1]:
-        end_frame -= 1
-    end_frame = min(end_frame + min_silence_frames, cut_frame)
+    end_frame = min(last_speech + 1 + min_silence_frames, n_frames)
 
     start_sample = first_speech * frame_len
     end_sample = min(end_frame * frame_len, len(audio))

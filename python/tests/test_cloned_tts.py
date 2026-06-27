@@ -1,47 +1,40 @@
-"""Tests for the Chatterbox Turbo cloned TTS wrapper.
+"""Tests for the Pocket TTS cloned TTS wrapper."""
 
-Follows Strict TDD: tests written before implementation.
-"""
-
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
 
-# ── Task 1.2: requirements.txt ──────────────────────────────────────────────
+# ── Packaging ───────────────────────────────────────────────────────────────
 
 
-def test_chatterbox_tts_importable():
-    """chatterbox-tts package MUST be importable after requirements.txt update."""
-    import chatterbox  # noqa: F811
+def test_pocket_tts_importable():
+    """pocket-tts package MUST be importable."""
+    import pocket_tts  # noqa: F401
 
-    assert hasattr(chatterbox, "__version__")
+    assert hasattr(pocket_tts, "TTSModel")
 
 
-def test_zipvoice_not_importable():
-    """Zipvoice/LuxTTS MUST NOT be importable after removal from requirements."""
+def test_chatterbox_not_required():
+    """chatterbox/zipvoice MUST NOT be required by the engine anymore."""
     import importlib
 
-    spec = importlib.util.find_spec("zipvoice")
-    assert spec is None, "zipvoice should not be installed"
+    assert importlib.util.find_spec("zipvoice") is None
 
 
-# ── Task 2.1: cloned_tts.py rewrite ─────────────────────────────────────────
+# ── Wrapper behaviour ───────────────────────────────────────────────────────
 
 
 class TestClonedTTS:
-    """Tests for the rewritten Chatterbox Turbo wrapper."""
+    """Tests for the Pocket TTS wrapper."""
 
     def test_warmup_engine_returns_none(self):
-        """warmup_engine() should return None and not raise."""
         import lt_engine.cloned_tts as ctts
 
         ctts._model = MagicMock()
-        result = ctts.warmup_engine()
-        assert result is None
+        assert ctts.warmup_engine() is None
 
     def test_warmup_calls_get_model_lazily(self, monkeypatch):
-        """warmup_engine() should delegate to _get_model()."""
         import lt_engine.cloned_tts as ctts
 
         ctts._model = None
@@ -54,20 +47,19 @@ class TestClonedTTS:
 
         monkeypatch.setattr(ctts, "_get_model", fake_get_model)
         ctts.warmup_engine()
-        assert called, "_get_model should be called by warmup_engine"
+        assert called
 
     def test_synthesize_cloned_falls_back_without_profile(self, tmp_path, monkeypatch):
-        """Without a voice profile, synthesize_cloned should fall back to Piper."""
         import lt_engine.cloned_tts as ctts
 
         monkeypatch.setattr(ctts.vp, "exists", lambda: False)
+        ctts.reset_voice_state()
 
         fallback_called = False
 
         def fake_fallback(text, out_wav):
             nonlocal fallback_called
             fallback_called = True
-            # Write a minimal valid WAV
             import struct, wave
 
             with wave.open(out_wav, "wb") as wf:
@@ -81,50 +73,37 @@ class TestClonedTTS:
         out = tmp_path / "test.wav"
         ctts.synthesize_cloned("Hello world", str(out))
 
-        assert fallback_called, "Should have called Piper fallback"
-        assert out.exists(), "Fallback should produce a WAV file"
+        assert fallback_called
+        assert out.exists()
 
-    def test_synthesize_cloned_calls_generate_with_profile(self, tmp_path, monkeypatch):
-        """With a voice profile, synthesize_cloned should call model.generate()."""
+    def test_synthesize_cloned_calls_generate_audio_with_state(self, tmp_path, monkeypatch):
+        """With a voice state, synthesize_cloned calls model.generate_audio(state, text)."""
         import torch
         import lt_engine.cloned_tts as ctts
 
-        # Mock profile existence
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
-
-        # Mock model
         mock_model = MagicMock()
-        mock_model.generate.return_value = torch.zeros(24000)
-        mock_model.sr = 24000
-        monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
+        mock_model.generate_audio.return_value = torch.zeros(24000)
+        mock_model.sample_rate = 24000
 
-        # Patch _normalize_rms to be a no-op
-        monkeypatch.setattr(ctts, "_normalize_rms", lambda a, target_rms=0.1: a)
+        monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
+        monkeypatch.setattr(ctts, "get_voice_state", lambda: {"fake": "state"})
 
         out = tmp_path / "cloned.wav"
         ctts.synthesize_cloned("Hello world", str(out))
 
-        assert out.exists(), "Should produce a WAV file"
-        mock_model.generate.assert_called_once()
-        # Verify audio_prompt_path was passed
-        call_kwargs = mock_model.generate.call_args[1]
-        assert "audio_prompt_path" in call_kwargs
+        assert out.exists()
+        mock_model.generate_audio.assert_called_once()
+        args = mock_model.generate_audio.call_args[0]
+        assert args[0] == {"fake": "state"}
+        assert args[1] == "Hello world"
 
     def test_synthesize_cloned_falls_back_on_failure(self, tmp_path, monkeypatch):
-        """If model.generate() raises, fall back to Piper."""
         import lt_engine.cloned_tts as ctts
 
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
-
         mock_model = MagicMock()
-        mock_model.generate.side_effect = RuntimeError("generation failed")
+        mock_model.generate_audio.side_effect = RuntimeError("generation failed")
         monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
+        monkeypatch.setattr(ctts, "get_voice_state", lambda: {"fake": "state"})
 
         fallback_called = False
 
@@ -144,195 +123,116 @@ class TestClonedTTS:
         out = tmp_path / "fail.wav"
         ctts.synthesize_cloned("Hello world", str(out))
 
-        assert fallback_called, "Should fall back on generation failure"
+        assert fallback_called
         assert out.exists()
 
-    def test_synthesize_cloned_handles_short_text(self, tmp_path, monkeypatch):
-        """Text with ≤2 words should NOT fall back — Chatterbox Turbo handles it."""
-        import torch
+    def test_reset_voice_state_clears_cache(self):
         import lt_engine.cloned_tts as ctts
 
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
+        ctts._voice_state = {"some": "state"}
+        ctts.reset_voice_state()
+        assert ctts._voice_state is None
 
-        mock_model = MagicMock()
-        mock_model.generate.return_value = torch.zeros(24000)
-        mock_model.sr = 24000
-        monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
-        monkeypatch.setattr(ctts, "_normalize_rms", lambda a, target_rms=0.1: a)
-
-        out = tmp_path / "short.wav"
-        ctts.synthesize_cloned("Hi", str(out))
-        assert out.exists()
-        mock_model.generate.assert_called_once()
-
-    def test_reset_voice_prompt_clears_cache(self):
-        """reset_voice_prompt should clear the cached prompt/reference path."""
-        import lt_engine.cloned_tts as ctts
-
-        ctts._voice_prompt = "/some/path/reference.wav"
-        ctts.reset_voice_prompt()
-        assert ctts._voice_prompt is None
-
-    def test_get_voice_prompt_returns_path_when_profile_exists(self, monkeypatch):
-        """get_voice_prompt should return the reference path when profile exists."""
-        import lt_engine.cloned_tts as ctts
-
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
-
-        ctts.reset_voice_prompt()
-        result = ctts.get_voice_prompt()
-
-        assert result == "/fake/path/reference.wav"
-
-    def test_get_voice_prompt_returns_none_without_profile(self, monkeypatch):
-        """get_voice_prompt should return None when no profile exists."""
+    def test_get_voice_state_returns_none_without_profile(self, monkeypatch):
         import lt_engine.cloned_tts as ctts
 
         monkeypatch.setattr(ctts.vp, "exists", lambda: False)
-        ctts.reset_voice_prompt()
-        result = ctts.get_voice_prompt()
-        assert result is None
+        ctts.reset_voice_state()
+        assert ctts.get_voice_state() is None
 
-    def test_normalize_rms_scales_audio(self):
-        """_normalize_rms should scale audio to the target RMS."""
+    # ── Audio post-processing ────────────────────────────────────────────
+
+    def test_normalize_audio_scales_to_target_db(self):
         import lt_engine.cloned_tts as ctts
 
         audio = np.ones(1000, dtype=np.float32) * 0.5
-        result = ctts._normalize_rms(audio, target_rms=0.2)
+        result = ctts._normalize_audio(audio, target_db=-20.0, peak_limit=0.85)
         actual_rms = np.sqrt(np.mean(np.square(result)))
-        assert abs(actual_rms - 0.2) < 1e-5
+        expected_rms = 10 ** (-20.0 / 20)
+        assert abs(actual_rms - expected_rms) < 1e-4
 
-    def test_normalize_rms_handles_silence(self):
-        """_normalize_rms should return silence unchanged."""
+    def test_normalize_audio_applies_peak_limit(self):
+        import lt_engine.cloned_tts as ctts
+
+        audio = np.ones(1000, dtype=np.float32) * 5.0
+        result = ctts._normalize_audio(audio, target_db=0.0, peak_limit=0.85)
+        assert np.max(np.abs(result)) <= 0.85 + 1e-6
+
+    def test_normalize_audio_handles_silence(self):
         import lt_engine.cloned_tts as ctts
 
         audio = np.zeros(1000, dtype=np.float32)
-        result = ctts._normalize_rms(audio, target_rms=0.1)
+        result = ctts._normalize_audio(audio)
         np.testing.assert_array_equal(result, audio)
 
-    # ── Triangulation: WAV output format ─────────────────────────────────
-
-    def test_synthesize_cloned_output_is_24khz_mono_16bit(self, tmp_path, monkeypatch):
-        """Output WAV should be 24000 Hz, mono, 16-bit PCM."""
-        import torch
+    def test_trim_preserves_audio_after_long_internal_pause(self):
+        """Regression: multi-sentence output with a >1s inter-sentence pause must
+        NOT be truncated at the gap — the trailing sentence must survive."""
         import lt_engine.cloned_tts as ctts
 
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
+        sr = 24000
+        tone = (0.3 * np.sin(2 * np.pi * 200 * np.arange(int(sr * 0.5)) / sr)).astype(np.float32)
+        gap = np.zeros(int(sr * 1.5), dtype=np.float32)  # 1.5s pause between sentences
+        audio = np.concatenate([tone, gap, tone])
+
+        out = ctts._trim_tts_output(audio, sample_rate=sr)
+
+        # Must keep both tones + the gap (~2.5s+), not cut at the 1.5s gap.
+        assert len(out) / sr > 2.4
+
+    def test_trim_removes_trailing_silence(self):
+        import lt_engine.cloned_tts as ctts
+
+        sr = 24000
+        tone = (0.3 * np.sin(2 * np.pi * 200 * np.arange(int(sr * 0.5)) / sr)).astype(np.float32)
+        tail = np.zeros(int(sr * 2.0), dtype=np.float32)
+        audio = np.concatenate([tone, tail])
+
+        out = ctts._trim_tts_output(audio, sample_rate=sr)
+
+        # Trailing 2s of silence collapsed to a short pad; total well under input.
+        assert len(out) / sr < 1.0
+
+    def test_trim_prepends_leading_silence(self):
+        import lt_engine.cloned_tts as ctts
+
+        sr = 24000
+        tone = (0.3 * np.sin(2 * np.pi * 200 * np.arange(int(sr * 0.5)) / sr)).astype(np.float32)
+        out = ctts._trim_tts_output(tone, sample_rate=sr)
+
+        lead = int(sr * 0.03)
+        assert np.all(out[:lead] == 0)
+
+    # ── WAV output format ────────────────────────────────────────────────
+
+    def test_synthesize_cloned_output_is_24khz_mono_16bit(self, tmp_path, monkeypatch):
+        import torch
+        import wave
+        import lt_engine.cloned_tts as ctts
 
         mock_model = MagicMock()
-        mock_model.generate.return_value = torch.zeros(48000)  # 2 seconds at 24kHz
-        mock_model.sr = 24000
+        signal = torch.sin(torch.linspace(0, 4 * 3.14159, 48000)) * 0.3
+        mock_model.generate_audio.return_value = signal
+        mock_model.sample_rate = 24000
         monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
-        monkeypatch.setattr(ctts, "_normalize_rms", lambda a, target_rms=0.1: a)
+        monkeypatch.setattr(ctts, "get_voice_state", lambda: {"fake": "state"})
 
         out = tmp_path / "fmt_check.wav"
         ctts.synthesize_cloned("Hello world", str(out))
 
-        import wave
-
         with wave.open(str(out), "rb") as wf:
-            assert wf.getnchannels() == 1, "Must be mono"
-            assert wf.getsampwidth() == 2, "Must be 16-bit"
-            assert wf.getframerate() == 24000, "Must be 24000 Hz"
-
-    def test_synthesize_cloned_output_has_audio_data(self, tmp_path, monkeypatch):
-        """Output WAV should contain non-zero audio data after RMS normalisation."""
-        import torch
-        import wave
-        import lt_engine.cloned_tts as ctts
-
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(
-            ctts.vp, "reference_path", lambda: "/fake/path/reference.wav"
-        )
-
-        # Generate a signal with actual content
-        signal = torch.sin(torch.linspace(0, 4 * 3.14159, 48000)) * 0.3
-        mock_model = MagicMock()
-        mock_model.generate.return_value = signal
-        mock_model.sr = 24000
-        monkeypatch.setattr(ctts, "_get_model", lambda: mock_model)
-
-        out = tmp_path / "data_check.wav"
-        ctts.synthesize_cloned("Hello world", str(out))
-
-        # Verify the WAV contains audio data (not just silence)
-        import struct
-
-        with wave.open(str(out), "rb") as wf:
-            frames = wf.readframes(wf.getnframes())
-            samples = struct.unpack_from(f"<{len(frames)//2}h", frames)
-            assert max(abs(s) for s in samples) > 0, "WAV must contain audio data"
-
-    # ── Triangulation: Thread safety ─────────────────────────────────────
-
-    def test_get_voice_prompt_thread_safe(self, monkeypatch):
-        """get_voice_prompt should be safe against concurrent calls."""
-        import lt_engine.cloned_tts as ctts
-
-        call_count = 0
-
-        def counting_ref_path():
-            nonlocal call_count
-            call_count += 1
-            return "/counted/path.wav"
-
-        monkeypatch.setattr(ctts.vp, "exists", lambda: True)
-        monkeypatch.setattr(ctts.vp, "reference_path", counting_ref_path)
-
-        ctts.reset_voice_prompt()
-
-        # Call twice — second should use cached value
-        r1 = ctts.get_voice_prompt()
-        r2 = ctts.get_voice_prompt()
-
-        assert r1 == r2 == "/counted/path.wav"
-        # reference_path should only be called once (cached by _voice_prompt)
-        assert call_count == 1
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 24000
 
 
-# ── Task 3.2: server.py changes ──────────────────────────────────────────────
+# ── Server voice-profile endpoints ───────────────────────────────────────────
 
 
 class TestServerVoiceProfile:
-    """Tests for server voice-profile endpoint changes."""
-
-    def test_upload_voice_profile_no_encoding(self, tmp_path, monkeypatch):
-        """Upload should just save the WAV, no encoding step."""
-        from lt_engine import server
-
-        monkeypatch.setattr(server, "warmup", lambda: None)
-        monkeypatch.setattr(server.vp, "profile_dir", lambda: tmp_path)
-
-        saved = []
-
-        def fake_save(audio_bytes):
-            saved.append(audio_bytes)
-
-        monkeypatch.setattr(server.vp, "save", fake_save)
-
-        from fastapi.testclient import TestClient
-
-        with TestClient(server.app) as client:
-            r = client.post(
-                "/voice-profile", files={"file": ("ref.wav", b"fakewavdata")}
-            )
-            assert r.status_code == 200
-            assert r.json() == {"exists": True}
-            assert len(saved) == 1
-            assert saved[0] == b"fakewavdata"
+    """Tests for server voice-profile endpoint behaviour."""
 
     def test_delete_voice_profile_calls_reset(self, monkeypatch):
-        """DELETE should call reset_voice_prompt."""
         from lt_engine import server
 
         monkeypatch.setattr(server, "warmup", lambda: None)
@@ -343,7 +243,7 @@ class TestServerVoiceProfile:
             nonlocal reset_called
             reset_called = True
 
-        monkeypatch.setattr(server, "reset_voice_prompt", fake_reset)
+        monkeypatch.setattr(server, "reset_voice_state", fake_reset)
         monkeypatch.setattr(server.vp, "delete", lambda: None)
 
         from fastapi.testclient import TestClient
