@@ -253,3 +253,47 @@ class TestServerVoiceProfile:
             assert r.status_code == 200
             assert r.json() == {"exists": False}
             assert reset_called
+
+    def test_upload_voice_profile_accepts_raw_body(self, monkeypatch):
+        """Upload MUST accept raw WAV bytes in the body (no multipart form).
+
+        Sending the audio as the raw request body removes the python-multipart
+        dependency and chunked-encoding edge cases that broke uploads on a fresh
+        install. The bytes MUST reach vp.save unchanged.
+        """
+        from lt_engine import server
+
+        monkeypatch.setattr(server, "warmup", lambda: None)
+        monkeypatch.setattr(server, "reset_voice_state", lambda: None)
+        monkeypatch.setattr(server, "export_voice_state", lambda: None)
+
+        saved = {}
+        monkeypatch.setattr(server.vp, "save", lambda data: saved.update(bytes=data))
+
+        from fastapi.testclient import TestClient
+
+        payload = b"not-a-real-wav-but-non-empty"
+        with TestClient(server.app) as client:
+            r = client.post(
+                "/voice-profile",
+                content=payload,
+                headers={"Content-Type": "audio/wav"},
+            )
+            assert r.status_code == 200
+            assert r.json() == {"exists": True}
+            assert saved["bytes"] == payload
+
+    def test_upload_voice_profile_rejects_empty_body(self, monkeypatch):
+        from lt_engine import server
+
+        monkeypatch.setattr(server, "warmup", lambda: None)
+
+        from fastapi.testclient import TestClient
+
+        with TestClient(server.app) as client:
+            r = client.post(
+                "/voice-profile",
+                content=b"",
+                headers={"Content-Type": "audio/wav"},
+            )
+            assert r.status_code == 400

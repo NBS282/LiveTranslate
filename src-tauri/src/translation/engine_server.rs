@@ -290,18 +290,11 @@ pub fn voice_profile_exists() -> Result<bool, String> {
 
 /// Uploads raw audio bytes to the Python server for voice profile creation.
 pub fn upload_voice_profile(audio_bytes: &[u8]) -> Result<(), String> {
-    use reqwest::blocking::multipart;
-
-    let part = multipart::Part::bytes(audio_bytes.to_vec())
-        .file_name("reference.wav")
-        .mime_str("audio/wav")
-        .map_err(|e| e.to_string())?;
-    let form = multipart::Form::new().part("file", part);
-
     let client = reqwest::blocking::Client::new();
     let resp = client
         .post(format!("{}/voice-profile", base_url()))
-        .multipart(form)
+        .header("Content-Type", "audio/wav")
+        .body(audio_bytes.to_vec())
         .timeout(std::time::Duration::from_secs(600))
         .send()
         .map_err(|e| format!("upload request failed: {e}"))?;

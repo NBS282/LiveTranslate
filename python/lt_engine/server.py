@@ -1,9 +1,9 @@
 """Persistent FastAPI translation server. Loads models once at startup. Binds 127.0.0.1 only."""
-import asyncio
 import os
+import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from .pipeline import translate_audio, warmup
@@ -59,14 +59,14 @@ def get_voice_profile() -> dict:
 
 
 @app.post("/voice-profile")
-async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
+async def upload_voice_profile(request: Request) -> dict:
     """Save reference audio for voice cloning.
 
-    After saving the WAV, preprocesses the audio (DC offset, silence trim,
-    peak cap) and pre-computes the Pocket TTS voice state as .safetensors
-    so the first generation is fast.
+    Accepts raw WAV bytes in the request body (Content-Type: audio/wav).
+    After saving, preprocesses the audio and pre-computes the Pocket TTS
+    voice state as .safetensors so the first generation is fast.
     """
-    audio_bytes = await file.read()
+    audio_bytes = await request.body()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio file")
 
@@ -86,10 +86,16 @@ async def upload_voice_profile(file: UploadFile = File(...)) -> dict:
     except Exception:
         pass  # keep original if preprocessing fails
 
-    # Pre-compute voice state → .safetensors (non-blocking).
-    await asyncio.to_thread(export_voice_state)
+    reset_voice_state()  # clear cache so next synthesis reloads from disk
 
-    reset_voice_state()  # next get_voice_state() loads the fresh .safetensors
+    # Pre-compute .safetensors in the background; don't block the HTTP response.
+    # A plain daemon thread (not asyncio.create_task) is used on purpose: the
+    # event loop only keeps a weak reference to tasks, so a fire-and-forget task
+    # can be garbage-collected mid-run. If this export fails (OOM, missing
+    # weights) the client still gets a success response and the next synthesis
+    # falls back to computing the voice state from the raw WAV.
+    threading.Thread(target=export_voice_state, daemon=True).start()
+
     return {"exists": True}
 
 

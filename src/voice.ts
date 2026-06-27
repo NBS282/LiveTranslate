@@ -152,6 +152,7 @@ startRecBtn.addEventListener("click", async () => {
 stopRecBtn.addEventListener("click", async () => {
   if (!mediaRecorder) return;
   stopRecBtn.disabled = true;
+  clearTimerInterval();
   recStatusEl.textContent = "Procesando voz… (tarda unos segundos)";
 
   await new Promise<void>((resolve) => {
@@ -159,8 +160,6 @@ stopRecBtn.addEventListener("click", async () => {
     mediaRecorder!.stop();
     mediaRecorder!.stream.getTracks().forEach((t) => t.stop());
   });
-
-  clearTimerInterval();
 
   const blob = new Blob(recordedChunks, { type: "audio/webm" });
   const arrayBuffer = await blob.arrayBuffer();
