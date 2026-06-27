@@ -33,8 +33,15 @@ def _get_model():
         with _model_lock:
             if _model is None:
                 from pocket_tts import TTSModel
-                _model = TTSModel.load_model()
-                _log.info("Pocket TTS model loaded")
+                model = TTSModel.load_model()
+                # Pad short inputs with leading spaces. Pocket TTS degrades the
+                # first words when the token count is very low (<5 words), which
+                # is the common case for subtitle-length phrases. Upstream gates
+                # this behind a config flag that defaults to False; enable it so
+                # the opening words are intelligible.
+                model.pad_with_spaces_for_short_inputs = True
+                _model = model
+                _log.info("Pocket TTS model loaded (short-input padding ON)")
     return _model
 
 
@@ -153,10 +160,13 @@ def _trim_tts_output(
     )
     is_speech = rms >= threshold_linear
 
+    # Keep ~60 ms before the first detected speech frame so soft onset
+    # consonants (s, f, th) that dip below the threshold are not clipped.
+    lead_pad_frames = max(1, int(60 / frame_ms))
     first_speech = 0
     for i, s in enumerate(is_speech):
         if s:
-            first_speech = max(0, i - 1)
+            first_speech = max(0, i - lead_pad_frames)
             break
 
     max_silence_frames = int(max_internal_silence_ms / frame_ms)
@@ -187,7 +197,10 @@ def _trim_tts_output(
         fade = np.cos(np.linspace(0, np.pi / 2, fade_samples)) ** 2
         trimmed[-fade_samples:] *= fade
 
-    return trimmed
+    # Prepend a short silence so audio players / sinks that ramp up on the
+    # first samples don't swallow the opening phoneme.
+    lead_silence = np.zeros(int(sample_rate * 0.03), dtype=trimmed.dtype)
+    return np.concatenate([lead_silence, trimmed])
 
 
 def preprocess_reference_audio(
