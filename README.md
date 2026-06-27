@@ -75,6 +75,7 @@ Without the virtual cable, LiveTranslate still works — you see the subtitles a
 - **Push-to-talk** — hold a hotkey to translate, release to stop
 - **On-screen subtitles** — transparent overlay sits above all windows, click-through, auto-hides
 - **Audio playback (TTS)** — hear the translation spoken aloud (Piper voices)
+- **Voice cloning** — record a short sample of your voice and have the translation spoken back in *your own* voice instead of a generic one (powered by [Pocket TTS](https://huggingface.co/kyutai/pocket-tts))
 
 ### 100% local & private
 
@@ -206,7 +207,7 @@ LiveTranslate is in active development. Current focus areas:
 - [ ] Linux / macOS support
 - [ ] Built-in model download manager
 - [ ] Live keyboard output — type the translation as if you were physically typing it, so it appears in any text field on screen (chat, forms, live captions)
-- [ ] Voice cloning — instead of a generic TTS voice, the translated audio will sound like your own voice speaking the target language
+- [x] Voice cloning — instead of a generic TTS voice, the translated audio sounds like your own voice speaking the target language
 
 ---
 
