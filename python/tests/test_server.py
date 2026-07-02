@@ -4,10 +4,30 @@ import lt_engine.server as server
 
 def test_health_ok(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "cloning_available", lambda: True)
     with TestClient(server.app) as client:
         r = client.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"ready": True}
+        assert r.json() == {"ready": True, "cloning_available": True}
+
+
+def test_health_reports_cloning_unavailable(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "cloning_available", lambda: False)
+    with TestClient(server.app) as client:
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert r.json()["cloning_available"] is False
+
+
+def test_voice_profile_upload_503_when_cloning_unavailable(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "cloning_available", lambda: False)
+    monkeypatch.setattr(server, "cloning_error", lambda: "401 gated repo")
+    with TestClient(server.app) as client:
+        r = client.post("/voice-profile", content=b"RIFFfakewav")
+        assert r.status_code == 503
+        assert "401 gated repo" in r.json()["detail"]
 
 
 def test_translate_calls_engine(monkeypatch, tmp_path):

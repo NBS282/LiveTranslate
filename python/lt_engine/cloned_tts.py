@@ -9,6 +9,7 @@ generation loads from .safetensors (fast) instead of reprocessing the WAV.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import wave
@@ -67,9 +68,24 @@ def get_voice_state():
             if _voice_state is None:
                 model = _get_model()
                 st = _state_path()
-                src = str(st) if st.exists() else str(vp.reference_path())
-                _voice_state = model.get_state_for_audio_prompt(src)
-                _log.info("Voice state loaded from %s", src)
+                if st.exists():
+                    try:
+                        _voice_state = model.get_state_for_audio_prompt(str(st))
+                        _log.info("Voice state loaded from %s", st)
+                    except Exception as exc:
+                        # Half-written or corrupt export — discard it and
+                        # rebuild from the WAV instead of failing translation.
+                        _log.warning(
+                            "Voice state file unreadable (%s); rebuilding from WAV", exc
+                        )
+                        try:
+                            st.unlink()
+                        except OSError:
+                            pass
+                if _voice_state is None:
+                    src = str(vp.reference_path())
+                    _voice_state = model.get_state_for_audio_prompt(src)
+                    _log.info("Voice state computed from %s", src)
     return _voice_state
 
 
@@ -93,8 +109,14 @@ def export_voice_state() -> None:
         from pocket_tts import export_model_state
         model = _get_model()
         state = model.get_state_for_audio_prompt(str(vp.reference_path()))
-        export_model_state(state, str(_state_path()))
-        _log.info("Voice state exported to %s", _state_path())
+        # Write to a temp file, then rename atomically: this runs in a
+        # background thread and a concurrent get_voice_state() must never
+        # see a half-written .safetensors.
+        final = _state_path()
+        tmp = final.with_name(final.name + ".tmp")
+        export_model_state(state, str(tmp))
+        os.replace(tmp, final)
+        _log.info("Voice state exported to %s", final)
     except Exception as exc:
         _log.warning("Voice state export failed (non-fatal): %s", exc)
 

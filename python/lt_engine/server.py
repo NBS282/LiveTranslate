@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from .pipeline import translate_audio, warmup
+from .pipeline import cloning_available, cloning_error, translate_audio, warmup
 from . import voice_profile as vp
 from .cloned_tts import reset_voice_state, export_voice_state, preprocess_reference_audio
 
@@ -30,7 +30,7 @@ class TranslateRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict:
-    return {"ready": True}
+    return {"ready": True, "cloning_available": cloning_available()}
 
 
 @app.post("/translate")
@@ -66,6 +66,13 @@ async def upload_voice_profile(request: Request) -> dict:
     After saving, preprocesses the audio and pre-computes the Pocket TTS
     voice state as .safetensors so the first generation is fast.
     """
+    if not cloning_available():
+        reason = cloning_error() or "voice cloning engine failed to load"
+        raise HTTPException(
+            status_code=503,
+            detail=f"voice cloning unavailable: {reason}",
+        )
+
     audio_bytes = await request.body()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio file")

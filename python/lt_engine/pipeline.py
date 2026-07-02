@@ -15,6 +15,22 @@ _asr = None
 _mt = None
 _piper = None
 
+# Voice cloning availability, resolved once during warmup(). Cloning is an
+# optional feature: if Pocket TTS cannot load (package missing, gated model
+# not cached and download rejected), the server keeps running with Piper.
+_cloning_available = False
+_cloning_error: str | None = None
+
+
+def cloning_available() -> bool:
+    """True if the Pocket TTS engine loaded successfully during warmup."""
+    return _cloning_available
+
+
+def cloning_error() -> str | None:
+    """Human-readable reason cloning is unavailable, or None."""
+    return _cloning_error
+
 
 def _piper_voice_path() -> str:
     """Resolve the Piper ONNX voice: env override, else repo-root default."""
@@ -79,15 +95,27 @@ def synthesize(text: str, out_wav: str) -> None:
 
 
 def warmup() -> None:
-    """Load all models eagerly. Call once at server startup."""
+    """Load all models eagerly. Call once at server startup.
+
+    Pocket TTS (voice cloning) is loaded best-effort: any failure is recorded
+    and the server starts without cloning instead of dying. A dead server
+    surfaces to the UI as a bare connection error on every request, which is
+    far worse than a degraded feature.
+    """
+    global _cloning_available, _cloning_error
     _get_asr()
     _get_mt()
     _get_piper()
-    # Pre-load Chatterbox Turbo model eagerly so the model weights are
-    # cached in RAM and the first synthesize_cloned call has zero extra
-    # latency. Model download + init is ~seconds.
-    from .cloned_tts import warmup_engine
-    warmup_engine()
+    try:
+        from .cloned_tts import warmup_engine
+        warmup_engine()
+        _cloning_available = True
+        _cloning_error = None
+    except Exception as e:  # noqa: BLE001 — degradation boundary, reason kept
+        import traceback
+        traceback.print_exc()
+        _cloning_available = False
+        _cloning_error = f"{type(e).__name__}: {e}"
 
 
 def translate_audio(
@@ -122,9 +150,18 @@ def translate_audio(
     translated_text = translate(source_text)
     out_wav = os.path.join(out_dir, "output.wav")
 
-    if use_cloned_voice:
+    # Fall back to Piper when cloning was requested but the engine is not
+    # available — translation must keep working even if cloning is degraded.
+    if use_cloned_voice and _cloning_available:
         from .cloned_tts import synthesize_cloned
-        synthesize_cloned(translated_text, out_wav)
+        try:
+            synthesize_cloned(translated_text, out_wav)
+        except Exception:
+            # A cloned-voice hiccup (e.g. voice state still being exported)
+            # must cost one phrase's voice quality, never the translation.
+            import traceback
+            traceback.print_exc()
+            synthesize(translated_text, out_wav)
     else:
         synthesize(translated_text, out_wav)
 

@@ -265,6 +265,7 @@ class TestServerVoiceProfile:
         from lt_engine import server
 
         monkeypatch.setattr(server, "warmup", lambda: None)
+        monkeypatch.setattr(server, "cloning_available", lambda: True)
         monkeypatch.setattr(server, "reset_voice_state", lambda: None)
         monkeypatch.setattr(server, "export_voice_state", lambda: None)
 
@@ -288,6 +289,7 @@ class TestServerVoiceProfile:
         from lt_engine import server
 
         monkeypatch.setattr(server, "warmup", lambda: None)
+        monkeypatch.setattr(server, "cloning_available", lambda: True)
 
         from fastapi.testclient import TestClient
 
