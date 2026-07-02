@@ -57,11 +57,22 @@ export async function loadVoiceStatus(): Promise<void> {
   // successful status response means the cloned voice is genuinely ready to use.
   // While the engine loads, keep the toggle disabled: show "preparing" if we
   // know a voice was saved before, otherwise leave the default generic state.
-  if (hasStoredProfile()) setPreparing();
+  //
+  // Recording is also blocked until the engine is up: the record flow ends in
+  // an upload that needs the server listening, and on first launch warmup can
+  // take several minutes (models may still be downloading).
+  recordBtn.disabled = true;
+  recordBtn.title = "El motor de traducción se está preparando…";
+  if (hasStoredProfile()) {
+    setPreparing();
+  } else {
+    statusLabel.textContent = "Preparando motor…";
+  }
 
-  // Poll until the engine responds — warmup can take minutes on first launch.
-  // 150 attempts * 2s ≈ 5 min, comfortably beyond a normal cold start.
-  for (let attempt = 0; attempt < 150; attempt++) {
+  // Poll until the engine responds — warmup can take minutes on first launch,
+  // longer if the first-run model download is still in progress.
+  // 450 attempts * 2s ≈ 15 min, comfortably beyond a slow first setup.
+  for (let attempt = 0; attempt < 450; attempt++) {
     try {
       const exists = await invoke<boolean>("get_voice_profile_status");
       updateUI(exists);
@@ -73,11 +84,14 @@ export async function loadVoiceStatus(): Promise<void> {
   }
 
   // Engine never came up. Leave the stored flag untouched so a later reload can
-  // still detect the profile; just fall back to the generic state for now.
-  updateUI(false);
+  // still detect the profile; keep recording blocked and say so honestly.
+  statusLabel.textContent = "Motor no disponible — reiniciá la aplicación";
 }
 
 function updateUI(profileExists: boolean): void {
+  // Reaching this point means the engine answered — recording is safe now.
+  recordBtn.disabled = false;
+  recordBtn.title = "";
   if (profileExists) {
     statusLabel.textContent = "Voz clonada lista";
     deleteBtn.classList.remove("hidden");

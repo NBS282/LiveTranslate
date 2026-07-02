@@ -285,6 +285,15 @@ fn get_voice_profile_status() -> Result<bool, String> {
 
 #[tauri::command]
 fn upload_voice_profile(audio_data: Vec<u8>) -> Result<(), String> {
+    // The engine may still be warming up (first launch loads ~1.5 GB of models,
+    // possibly while they are still downloading). The recording is already
+    // captured — wait for readiness instead of discarding it with an error.
+    if !translation::engine_server::is_server_up() {
+        translation::engine_server::wait_until_ready(std::time::Duration::from_secs(180))
+            .map_err(|_| {
+                "engine is still starting up — try again in a couple of minutes".to_string()
+            })?;
+    }
     translation::engine_server::upload_voice_profile(&audio_data)
 }
 
