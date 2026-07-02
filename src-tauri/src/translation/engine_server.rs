@@ -122,8 +122,14 @@ pub fn spawn_server() -> Result<Child, String> {
         .env("TRANSFORMERS_CACHE", &hf_cache)
         .env("NEMO_CACHE_DIR", &nemo_cache)
         .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-        .env("HF_TOKEN", option_env!("HF_TOKEN").unwrap_or(""))
         .stderr(Stdio::piped());
+
+    // Only pass HF_TOKEN when a non-empty one was baked in at build time.
+    // The Hub rejects EVERY download (including public repos) with 401 when
+    // the token is empty, expired, or revoked — worse than sending no token.
+    if let Some(token) = option_env!("HF_TOKEN").filter(|t| !t.is_empty()) {
+        cmd.env("HF_TOKEN", token);
+    }
 
     // Only set current_dir when the directory exists. On Windows, an invalid
     // current_dir causes ERROR_DIRECTORY (os error 267) before the process starts.
@@ -141,13 +147,26 @@ pub fn spawn_server() -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn translation server '{program}': {e}"))?;
 
     if let Some(stderr) = child.stderr.take() {
+        // Relay to eprintln! (dev console) AND to <root>/logs/engine.log so
+        // production failures are inspectable — a windowed release build has
+        // no visible stderr.
+        let log_dir = crate::translation::sidecar::repo_root().join("logs");
         std::thread::spawn(move || {
-            use std::io::BufRead;
+            use std::io::{BufRead, Write};
+            let _ = std::fs::create_dir_all(&log_dir);
+            let mut log_file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_dir.join("engine.log"))
+                .ok();
             for line in std::io::BufReader::new(stderr)
                 .lines()
                 .map_while(Result::ok)
             {
                 eprintln!("[lt_engine] {line}");
+                if let Some(f) = log_file.as_mut() {
+                    let _ = writeln!(f, "{line}");
+                }
             }
         });
     }

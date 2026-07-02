@@ -565,13 +565,21 @@ except Exception as e:
     print(f"WARN [Pocket TTS optional]: {type(e).__name__}: {e}", flush=True)
 "#,
         91,
-        &[
-            ("HF_HOME", hf_cache_str.as_str()),
-            ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
-            ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
-            ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
-            ("HF_TOKEN", option_env!("HF_TOKEN").unwrap_or("")),
-        ],
+        &{
+            let mut env_pairs = vec![
+                ("HF_HOME", hf_cache_str.as_str()),
+                ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
+                ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
+                ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
+            ];
+            // Only pass HF_TOKEN when a non-empty one was baked in at build
+            // time. The Hub rejects EVERY download (including public repos)
+            // with 401 when the token is empty, expired, or revoked.
+            if let Some(token) = option_env!("HF_TOKEN").filter(|t| !t.is_empty()) {
+                env_pairs.push(("HF_TOKEN", token));
+            }
+            env_pairs
+        },
     )?;
 
     // ── Step 6: ensure lt_engine source is available ──────────────────────────
