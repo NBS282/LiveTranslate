@@ -77,3 +77,18 @@ def test_transcribe_partial_missing_file_400(monkeypatch):
     with TestClient(server.app) as client:
         r = client.post("/transcribe-partial", json={"input_path": "/no/such.wav"})
         assert r.status_code == 400
+
+
+def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+
+    def boom(path):
+        raise RuntimeError("decoder exploded")
+
+    monkeypatch.setattr(server, "speech_translate", boom)
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        r = client.post("/transcribe-partial", json={"input_path": str(f)})
+        assert r.status_code == 500
+        assert "decoder exploded" in r.json()["detail"]
