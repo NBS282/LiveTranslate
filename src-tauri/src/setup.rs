@@ -477,7 +477,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
-    // ── Step 5: pre-cache ML models (MarianMT + Parakeet ASR + Pocket TTS) ───
+    // ── Step 5: pre-cache ML models (MarianMT + Parakeet ASR + Canary AST + Pocket TTS) ───
     // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
     // app data and are never re-downloaded on subsequent launches.
     let hf_cache = crate::translation::sidecar::repo_root()
@@ -490,7 +490,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         app,
         "Downloading translation models",
         91,
-        "~2.1 GB — first-time download, please wait…",
+        "~5.6 GB — first-time download, please wait…",
     );
     let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
     // Create nemo sub-dir before the script runs so it doesn't hit a permissions
@@ -507,7 +507,7 @@ nemo_dir = os.environ.get("NEMO_CACHE_DIR", "")
 if nemo_dir:
     os.makedirs(nemo_dir, exist_ok=True)
 
-print("(1/3) Downloading MarianMT ES->EN (~300 MB)...", flush=True)
+print("(1/4) Downloading MarianMT ES->EN (~300 MB)...", flush=True)
 try:
     from transformers import MarianMTModel, MarianTokenizer
     MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-es-en")
@@ -517,7 +517,7 @@ except Exception as e:
     print(f"ERROR [MarianMT]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     sys.exit(1)
 
-print("(2/3) Downloading Parakeet ASR model (~1.1 GB)...", flush=True)
+print("(2/4) Downloading Parakeet ASR model (~1.1 GB)...", flush=True)
 try:
     # On Windows without Developer Mode, os.symlink raises WinError 1314.
     # huggingface_hub's fallback copies files using the relative symlink src
@@ -551,11 +551,20 @@ except Exception as e:
     print(f"ERROR [Parakeet]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     sys.exit(1)
 
+print("(3/4) Downloading Canary 1B Flash speech translation (~3.5 GB)...", flush=True)
+try:
+    from huggingface_hub import snapshot_download
+    snapshot_download("nvidia/canary-1b-flash")
+    print("Canary model files cached.", flush=True)
+except Exception as e:
+    print(f"ERROR [Canary]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
+
 # Voice cloning (Pocket TTS) is OPTIONAL — never abort setup if it is
 # missing or fails to download. Loading the model here pre-fetches exactly
 # the files the runtime server will use, so the first cloned synthesis has
 # no download cost.
-print("(3/3) Downloading Pocket TTS model (optional, ~200 MB)...", flush=True)
+print("(4/4) Downloading Pocket TTS model (optional, ~200 MB)...", flush=True)
 try:
     from pocket_tts import TTSModel
     TTSModel.load_model()
