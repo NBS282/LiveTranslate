@@ -388,7 +388,13 @@ pub fn start(
             let mut last_len = 0usize;
             while !stop_partials.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(1200));
-                let snap = seg_for_partials.lock().unwrap().snapshot();
+                // A poisoned lock means the other thread panicked mid-push/snapshot;
+                // the segmenter state is still sound (Vec operations don't tear), so
+                // recover the guard instead of killing the live session.
+                let snap = seg_for_partials
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .snapshot();
                 let Some(samples) = snap else {
                     if last_len != 0 {
                         last_len = 0;
@@ -493,7 +499,10 @@ fn run_producer(
                         // Lock only for the push call itself — never held across
                         // `seg_tx.send` or any I/O — so the partial-decode thread's
                         // snapshot() never blocks on this producer for long.
-                        let closed = segmenter.lock().unwrap().push(&frame_acc, voiced);
+                        let closed = segmenter
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(&frame_acc, voiced);
                         if let Some(seg) = closed {
                             let _ = seg_tx.send(seg);
                         }
