@@ -9,6 +9,7 @@ const tgtChars = document.getElementById("tgt-chars")!;
 const win = getCurrentWebviewWindow();
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null;
+let fadeTimer: ReturnType<typeof setTimeout> | null = null;
 let streamTimer: ReturnType<typeof setTimeout> | null = null;
 let showEnabled = true;
 
@@ -116,11 +117,28 @@ function streamText(text: string): void {
   tick();
 }
 
+/// Cancel the whole hide chain — both the 9s delay and the in-flight 280ms
+/// fade-out step, so a caption shown inside that window is not hidden under it.
+function cancelHide(): void {
+  if (hideTimer !== null) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  if (fadeTimer !== null) {
+    clearTimeout(fadeTimer);
+    fadeTimer = null;
+  }
+}
+
 function scheduleHide(): void {
-  if (hideTimer !== null) clearTimeout(hideTimer);
+  cancelHide();
   hideTimer = setTimeout(() => {
+    hideTimer = null;
     subtitle.classList.remove("visible");
-    setTimeout(() => void win.hide(), 280);
+    fadeTimer = setTimeout(() => {
+      fadeTimer = null;
+      void win.hide();
+    }, 280);
   }, 9000);
 }
 
@@ -128,8 +146,10 @@ function scheduleHide(): void {
 void listen<boolean>("overlay-toggle", (e) => {
   showEnabled = e.payload;
   if (!showEnabled) {
-    if (hideTimer !== null) clearTimeout(hideTimer);
+    epoch++; // abort in-flight partial/phrase continuations
+    cancelHide();
     cancelStream();
+    clearPartial();
     subtitle.classList.remove("visible");
     void win.hide();
   }
@@ -143,6 +163,15 @@ void listen<boolean>("overlay-toggle", (e) => {
 
 let partialActive = false;
 
+// Monotonic generation counter. `partial` and `phrase` are independent async
+// listeners fed by unsynchronized Rust threads, and each suspends at awaits
+// (win.show, resizeToContent) — so an in-flight continuation can resume AFTER
+// a newer event already rewrote the caption. Every event that takes ownership
+// of the caption (a phrase, a segment close, an overlay disable) bumps the
+// epoch; older continuations compare their captured value after each await
+// and bail out instead of clobbering newer DOM state.
+let epoch = 0;
+
 function clearPartial(): void {
   partialActive = false;
   tgtChars.classList.remove("subtitle-partial");
@@ -153,6 +182,7 @@ void listen<{ text: string }>("partial", async (e) => {
 
   if (e.payload.text.length === 0) {
     // Segment closed — drop the preview; the final phrase (if any) re-shows.
+    epoch++; // invalidate in-flight partial continuations
     if (!partialActive) return;
     clearPartial();
     tgtChars.textContent = "";
@@ -161,23 +191,32 @@ void listen<{ text: string }>("partial", async (e) => {
     return;
   }
 
+  const myEpoch = epoch; // stale-check token for the awaits below
+
   cancelStream();
   if (!partialActive) {
     partialActive = true;
     tgtChars.classList.add("subtitle-partial");
     srcText.textContent = ""; // partials carry no source text
   }
-  if (hideTimer !== null) clearTimeout(hideTimer); // keep the card up while live
+  cancelHide(); // keep the card up while the segment is live
 
   await win.show();
+  if (myEpoch !== epoch) return; // a phrase/close/disable won the race
   subtitle.classList.add("visible");
   tgtChars.textContent = e.payload.text;
   await resizeToContent();
+  // No DOM writes after the last await — nothing left to guard.
 });
 
 void listen<{ source_text: string; translated_text: string; error: string | null }>(
   "phrase",
   async (e) => {
+    // The finalized phrase is the authority over the caption: bump the epoch so
+    // in-flight partial continuations go stale, and capture it so a NEWER
+    // phrase can in turn invalidate this handler at its own awaits.
+    const myEpoch = ++epoch;
+
     if (e.payload.error) {
       // An errored segment still closes the live preview.
       if (partialActive) {
@@ -191,12 +230,15 @@ void listen<{ source_text: string; translated_text: string; error: string | null
     clearPartial();
     if (!showEnabled) return;
 
+    cancelHide(); // a pending fade must not hide the window we're about to show
     await win.show();
+    if (myEpoch !== epoch) return; // a newer phrase took over
     subtitle.classList.add("visible");
     srcText.textContent = `ES: ${e.payload.source_text}`;
     // Fill the full text so the card has its final size when we measure.
     tgtChars.textContent = e.payload.translated_text;
     await resizeToContent();
+    if (myEpoch !== epoch) return; // a newer phrase took over
     // Now clear and start the char-by-char streaming effect.
     streamText(e.payload.translated_text);
     scheduleHide();
