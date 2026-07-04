@@ -67,3 +67,35 @@ def test_translate_audio_legacy_path_unchanged(monkeypatch, tmp_path):
 
     assert result["source_text"] == "hola"
     assert result["translated_text"] == "hello"
+
+
+def test_warmup_canary_engine_skips_parakeet_and_marian(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "translation_engine", lambda: "canary")
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: calls.append("canary"))
+    monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
+    monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
+    monkeypatch.setattr(pipeline, "_get_piper", lambda: calls.append("piper"))
+    import lt_engine.cloned_tts as ct
+    monkeypatch.setattr(ct, "warmup_engine", lambda: None)
+
+    pipeline.warmup()
+
+    assert "canary" in calls and "piper" in calls
+    assert "asr" not in calls and "mt" not in calls
+
+
+def test_warmup_legacy_engine_loads_parakeet_and_marian(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: calls.append("canary"))
+    monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
+    monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
+    monkeypatch.setattr(pipeline, "_get_piper", lambda: calls.append("piper"))
+    import lt_engine.cloned_tts as ct
+    monkeypatch.setattr(ct, "warmup_engine", lambda: None)
+
+    pipeline.warmup()
+
+    assert "asr" in calls and "mt" in calls
+    assert "canary" not in calls

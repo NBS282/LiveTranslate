@@ -138,8 +138,11 @@ def warmup() -> None:
     far worse than a degraded feature.
     """
     global _cloning_available, _cloning_error
-    _get_asr()
-    _get_mt()
+    if translation_engine() == "canary":
+        _get_canary()
+    else:
+        _get_asr()
+        _get_mt()
     _get_piper()
     try:
         from .cloned_tts import warmup_engine
