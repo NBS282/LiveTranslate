@@ -339,6 +339,27 @@ pub fn delete_voice_profile() -> Result<(), String> {
     Ok(())
 }
 
+/// Sends an open (in-progress) segment for partial translation. Short
+/// timeout: a stale partial is worthless, drop it and try the next tick.
+pub fn transcribe_partial(input: &Path) -> Result<String, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/transcribe-partial", base_url()))
+        .json(&serde_json::json!({ "input_path": input.to_string_lossy() }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .map_err(|e| format!("partial request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("partial decode error {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(body
+        .get("text")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +382,11 @@ mod tests {
     #[test]
     fn invalid_json_errors() {
         assert!(parse_translate_response("nope").is_err());
+    }
+
+    #[test]
+    fn parses_partial_response() {
+        let v: serde_json::Value = serde_json::from_str(r#"{"text":"Partial"}"#).unwrap();
+        assert_eq!(v.get("text").and_then(|x| x.as_str()).unwrap(), "Partial");
     }
 }
