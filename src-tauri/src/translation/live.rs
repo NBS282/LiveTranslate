@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
@@ -371,10 +371,57 @@ pub fn start(
         });
     }
 
+    // Shared with the partial-decode thread below: the producer pushes frames in,
+    // the partial thread snapshots the still-open segment out. Continuous mode only —
+    // PTT (`start_ptt`) does not use a `Segmenter` at all, so it never shares this lock.
+    let segmenter = Arc::new(Mutex::new(Segmenter::new(8, 8, 267)));
+
+    // Partial subtitles: translate the open segment every ~1.2s so the user
+    // sees text while still speaking. One request in flight; a tick is
+    // skipped when the previous decode is still running or nothing new
+    // was captured.
+    {
+        let seg_for_partials = segmenter.clone();
+        let app_partials = app.clone();
+        let stop_partials = stop.clone();
+        std::thread::spawn(move || {
+            let mut last_len = 0usize;
+            while !stop_partials.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                let snap = seg_for_partials.lock().unwrap().snapshot();
+                let Some(samples) = snap else {
+                    if last_len != 0 {
+                        last_len = 0;
+                        let _ = app_partials.emit("partial", serde_json::json!({ "text": "" }));
+                    }
+                    continue;
+                };
+                // Under 1s of audio the decode returns noise; over-eager ticks
+                // also starve the final /translate call on weak CPUs.
+                if samples.len() < 16_000 || samples.len() == last_len {
+                    continue;
+                }
+                last_len = samples.len();
+                if let Ok(path) = write_segment_wav(&samples) {
+                    match crate::translation::engine_server::transcribe_partial(&path) {
+                        Ok(text) if !text.is_empty() => {
+                            let _ =
+                                app_partials.emit("partial", serde_json::json!({ "text": text }));
+                        }
+                        _ => {}
+                    }
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        });
+    }
+
     // Producer thread: capture → resample → VAD → segment → send.
     let stop_prod = stop.clone();
     std::thread::spawn(move || {
-        if let Err(e) = run_producer(device, in_rate, channels, seg_tx, pass_tx, stop_prod) {
+        if let Err(e) = run_producer(
+            device, in_rate, channels, seg_tx, pass_tx, stop_prod, segmenter,
+        ) {
             eprintln!("live producer error: {e}");
         }
     });
@@ -392,16 +439,15 @@ fn run_producer(
     seg_tx: Sender<Vec<i16>>,
     pass_tx: Sender<Vec<i16>>,
     stop: Arc<AtomicBool>,
+    segmenter: Arc<Mutex<Segmenter>>,
 ) -> Result<(), String> {
     use webrtc_vad::{SampleRate, Vad, VadMode};
 
-    // VAD cadence: ~240ms trailing silence closes a phrase (8 * 30ms),
-    // ~240ms minimum voiced (8 * 30ms) to emit. Lower silence = more responsive,
-    // but too low risks cutting mid-phrase. Tune here.
-    // silence_close=8 (~240ms), min_voiced=8 (~240ms), max_frames=267 (~8s force cut).
+    // Segmenter cadence (silence_close=8 ~240ms, min_voiced=8 ~240ms, max_frames=267
+    // ~8s force cut) is fixed at construction in `start()`, shared via `Arc<Mutex<_>>`
+    // with the partial-decode thread so it can snapshot the still-open segment.
     // 8s (was 5s) so a normal long sentence isn't force-cut mid-phrase before the
     // speaker's natural pause closes it — the 5s cap clipped the end of >5s phrases.
-    let mut segmenter = Segmenter::new(8, 8, 267);
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::Quality);
 
     // Channel from the cpal callback (runs on an OS audio thread) to our loop below.
@@ -444,7 +490,11 @@ fn run_producer(
                     frame_acc.push(sample);
                     if frame_acc.len() == FRAME_SAMPLES_16K {
                         let voiced = vad.is_voice_segment(&frame_acc).unwrap_or(false);
-                        if let Some(seg) = segmenter.push(&frame_acc, voiced) {
+                        // Lock only for the push call itself — never held across
+                        // `seg_tx.send` or any I/O — so the partial-decode thread's
+                        // snapshot() never blocks on this producer for long.
+                        let closed = segmenter.lock().unwrap().push(&frame_acc, voiced);
+                        if let Some(seg) = closed {
                             let _ = seg_tx.send(seg);
                         }
                         let _ = pass_tx.send(frame_acc.clone());

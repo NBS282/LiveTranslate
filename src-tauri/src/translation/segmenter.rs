@@ -59,6 +59,15 @@ impl Segmenter {
 
         None
     }
+
+    /// Copy of the open segment while speech is in progress (None otherwise).
+    pub fn snapshot(&self) -> Option<Vec<i16>> {
+        if self.in_speech && !self.buf.is_empty() {
+            Some(self.buf.clone())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -139,5 +148,15 @@ mod tests {
         assert!(s.push(&frame(), true).is_none());
         let seg = s.push(&frame(), true); // 2nd frame → max_frames hit, but voiced=2 < min=3
         assert!(seg.is_none(), "should drop segment below min_voiced");
+    }
+
+    #[test]
+    fn snapshot_returns_open_buffer_only_during_speech() {
+        let mut s = Segmenter::new(3, 1, 1000);
+        assert!(s.snapshot().is_none());
+        s.push(&frame(), true);
+        s.push(&frame(), true);
+        let snap = s.snapshot().expect("open segment should snapshot");
+        assert_eq!(snap.len(), 2 * FRAME_SAMPLES_16K);
     }
 }
