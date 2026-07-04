@@ -239,6 +239,13 @@ void listen<{ source_text: string; translated_text: string; error: string | null
     tgtChars.textContent = e.payload.translated_text;
     await resizeToContent();
     if (myEpoch !== epoch) return; // a newer phrase took over
+    // Re-assert the final presentation: a same-epoch partial (the next
+    // segment's preview racing our awaits — partials read the epoch but never
+    // bump it) may have re-added the dimmed style between our continuations.
+    // clearPartial touches only the class and flag — never #src-text, which we
+    // just filled — and this tail runs synchronously with the check above, so
+    // a partial arriving later still takes the slot legitimately.
+    clearPartial();
     // Now clear and start the char-by-char streaming effect.
     streamText(e.payload.translated_text);
     scheduleHide();
