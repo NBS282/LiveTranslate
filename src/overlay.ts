@@ -135,10 +135,60 @@ void listen<boolean>("overlay-toggle", (e) => {
   }
 });
 
+// ── Partial (in-progress) translation ─────────────────────────────────────────
+// While a segment is open the engine streams a rough preview (`partial` event,
+// ~1.2s cadence). It reuses the caption card's target line, dimmed and italic,
+// and is cleared when the final phrase lands or an empty partial marks the
+// segment closed.
+
+let partialActive = false;
+
+function clearPartial(): void {
+  partialActive = false;
+  tgtChars.classList.remove("subtitle-partial");
+}
+
+void listen<{ text: string }>("partial", async (e) => {
+  if (!showEnabled) return;
+
+  if (e.payload.text.length === 0) {
+    // Segment closed — drop the preview; the final phrase (if any) re-shows.
+    if (!partialActive) return;
+    clearPartial();
+    tgtChars.textContent = "";
+    subtitle.classList.remove("visible");
+    scheduleHide();
+    return;
+  }
+
+  cancelStream();
+  if (!partialActive) {
+    partialActive = true;
+    tgtChars.classList.add("subtitle-partial");
+    srcText.textContent = ""; // partials carry no source text
+  }
+  if (hideTimer !== null) clearTimeout(hideTimer); // keep the card up while live
+
+  await win.show();
+  subtitle.classList.add("visible");
+  tgtChars.textContent = e.payload.text;
+  await resizeToContent();
+});
+
 void listen<{ source_text: string; translated_text: string; error: string | null }>(
   "phrase",
   async (e) => {
-    if (e.payload.error) return;
+    if (e.payload.error) {
+      // An errored segment still closes the live preview.
+      if (partialActive) {
+        clearPartial();
+        tgtChars.textContent = "";
+        subtitle.classList.remove("visible");
+        scheduleHide();
+      }
+      return;
+    }
+    clearPartial();
     if (!showEnabled) return;
 
     await win.show();

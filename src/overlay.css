@@ -91,6 +91,12 @@ body {
   text-shadow: 0 0 10px var(--highlight-shadow), 0 1px 8px rgba(0, 0, 0, 0.5);
 }
 
+/* In-progress (partial) translation — dimmed and italic until the final lands. */
+.tgt.subtitle-partial {
+  opacity: 0.55;
+  font-style: italic;
+}
+
 /* Source text (smaller, muted) */
 .src {
   font-size: 0.82rem;
