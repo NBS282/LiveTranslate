@@ -24,6 +24,23 @@ _voice_state = None
 _model_lock = threading.Lock()
 _state_lock = threading.Lock()
 
+
+def _import_pocket_tts():
+    """Import pocket_tts without letting it throttle the process.
+
+    pocket_tts calls torch.set_num_threads(1) at import time, which would
+    degrade every other model in this process (Canary/Parakeet decode gets
+    ~3x slower). Save and restore the thread count around the import.
+    """
+    import torch
+
+    n_threads = torch.get_num_threads()
+    import pocket_tts
+
+    torch.set_num_threads(n_threads)
+    return pocket_tts
+
+
 # ---------------------------------------------------------------------------
 # Model singleton
 # ---------------------------------------------------------------------------
@@ -34,7 +51,7 @@ def _get_model():
     if _model is None:
         with _model_lock:
             if _model is None:
-                from pocket_tts import TTSModel
+                TTSModel = _import_pocket_tts().TTSModel
                 model = TTSModel.load_model()
                 # Pad short inputs with leading spaces. Pocket TTS degrades the
                 # first words when the token count is very low (<5 words), which
@@ -106,7 +123,7 @@ def export_voice_state() -> None:
     if not vp.exists():
         return
     try:
-        from pocket_tts import export_model_state
+        export_model_state = _import_pocket_tts().export_model_state
         model = _get_model()
         state = model.get_state_for_audio_prompt(str(vp.reference_path()))
         # Write to a temp file, then rename atomically: this runs in a

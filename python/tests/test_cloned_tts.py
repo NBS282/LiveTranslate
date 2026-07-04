@@ -300,3 +300,18 @@ class TestServerVoiceProfile:
                 headers={"Content-Type": "audio/wav"},
             )
             assert r.status_code == 400
+
+
+# ── Thread-count regression ─────────────────────────────────────────────────
+
+
+def test_pocket_tts_import_preserves_torch_threads():
+    """pocket_tts sets torch to 1 thread at import; the wrapper must undo it."""
+    import torch
+
+    from lt_engine.cloned_tts import _import_pocket_tts
+
+    before = torch.get_num_threads()
+    _import_pocket_tts()
+
+    assert torch.get_num_threads() == before
