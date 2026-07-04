@@ -59,3 +59,21 @@ def test_translate_missing_file_400(monkeypatch):
     with TestClient(server.app) as client:
         r = client.post("/translate", json={"input_path": "/no/such.wav", "out_dir": "."})
         assert r.status_code == 400
+
+
+def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "speech_translate", lambda p: "Partial text")
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        r = client.post("/transcribe-partial", json={"input_path": str(f)})
+        assert r.status_code == 200
+        assert r.json() == {"text": "Partial text"}
+
+
+def test_transcribe_partial_missing_file_400(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    with TestClient(server.app) as client:
+        r = client.post("/transcribe-partial", json={"input_path": "/no/such.wav"})
+        assert r.status_code == 400

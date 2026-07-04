@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from .pipeline import cloning_available, cloning_error, translate_audio, warmup
+from .pipeline import cloning_available, cloning_error, speech_translate, translate_audio, warmup
 from . import voice_profile as vp
 from .cloned_tts import reset_voice_state, export_voice_state, preprocess_reference_audio
 
@@ -26,6 +26,10 @@ class TranslateRequest(BaseModel):
     src: str = "es"
     tgt: str = "en"
     use_cloned_voice: bool = False
+
+
+class PartialRequest(BaseModel):
+    input_path: str
 
 
 @app.get("/health")
@@ -51,6 +55,19 @@ def do_translate(req: TranslateRequest) -> dict:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"translation failed: {e}")
+
+
+@app.post("/transcribe-partial")
+def transcribe_partial(req: PartialRequest) -> dict:
+    """Translate an in-progress (open) audio segment. Display-only partials."""
+    if not os.path.isfile(req.input_path):
+        raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
+    try:
+        return {"text": speech_translate(req.input_path)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"partial decode failed: {e}")
 
 
 @app.get("/voice-profile")
