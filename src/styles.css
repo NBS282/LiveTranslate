@@ -1133,6 +1133,10 @@ button {
   border-left-color: var(--danger);
   color: var(--danger);
 }
+#phrases li.subtitle-partial {
+  opacity: 0.55;
+  font-style: italic;
+}
 @keyframes phrase-in {
   from {
     opacity: 0;

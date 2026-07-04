@@ -52,11 +52,37 @@ overlayToggle.addEventListener("click", async () => {
   if (next && listening) void (await overlay())?.show();
 });
 
+// ── Partial (in-progress) translation listener ────────────────────────────────
+// The engine streams a rough, dimmed preview of the current segment while it is
+// still open (Task 7's `partial` event). It stays pinned above the finalized
+// phrases and is cleared once the segment lands (a `phrase` event) or closes
+// (an empty `partial`).
+
+const partialEl = document.createElement("li");
+partialEl.className = "subtitle-partial hidden";
+phrases.prepend(partialEl);
+
+function clearPartial(): void {
+  partialEl.textContent = "";
+  partialEl.classList.add("hidden");
+}
+
+void listen<{ text: string }>("partial", (e) => {
+  if (e.payload.text.length === 0) {
+    clearPartial();
+    return;
+  }
+  partialEl.textContent = e.payload.text;
+  partialEl.classList.remove("hidden");
+  phrases.prepend(partialEl); // re-pin above any phrases finalized meanwhile
+});
+
 // ── Phrase listener ───────────────────────────────────────────────────────────
 
 void listen<{ source_text: string; translated_text: string; error: string | null }>(
   "phrase",
   (e) => {
+    clearPartial();
     const li = document.createElement("li");
     if (e.payload.error) {
       li.textContent = e.payload.error;
