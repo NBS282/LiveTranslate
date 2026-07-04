@@ -14,6 +14,7 @@ import wave
 _asr = None
 _mt = None
 _piper = None
+_canary = None
 
 # Voice cloning availability, resolved once during warmup(). Cloning is an
 # optional feature: if Pocket TTS cannot load (package missing, gated model
@@ -70,6 +71,40 @@ def _get_piper():
         from piper import PiperVoice
         _piper = PiperVoice.load(_piper_voice_path())
     return _piper
+
+
+def translation_engine() -> str:
+    """Active live-translation engine: "canary" (default) or "legacy"."""
+    return os.environ.get("LT_TRANSLATION_ENGINE", "canary")
+
+
+def _get_canary():
+    global _canary
+    if _canary is None:
+        from nemo.collections.asr.models import EncDecMultiTaskModel
+
+        model = EncDecMultiTaskModel.from_pretrained("nvidia/canary-1b-flash")
+        model.eval()
+        cfg = model.cfg.decoding
+        cfg.beam.beam_size = int(os.environ.get("LT_CANARY_BEAM", "4"))
+        model.change_decoding_strategy(cfg)
+        _canary = model
+    return _canary
+
+
+def speech_translate(audio_path: str) -> str:
+    """Translate Spanish speech directly to English text (Canary AST)."""
+    out = _get_canary().transcribe(
+        [audio_path],
+        source_lang="es",
+        target_lang="en",
+        task="ast",
+        pnc="yes",
+        batch_size=1,
+        verbose=False,
+    )
+    item = out[0]
+    return getattr(item, "text", item).strip()
 
 
 def transcribe(audio_path: str) -> str:
@@ -143,11 +178,18 @@ def translate_audio(
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    source_text = transcribe(input_path)
-    if not source_text.strip():
-        raise ValueError("transcription produced no text")
-
-    translated_text = translate(source_text)
+    if translation_engine() == "canary":
+        # Canary AST: speech -> translated text in one pass. There is no
+        # intermediate Spanish transcript to show.
+        source_text = ""
+        translated_text = speech_translate(input_path)
+        if not translated_text.strip():
+            raise ValueError("transcription produced no text")
+    else:
+        source_text = transcribe(input_path)
+        if not source_text.strip():
+            raise ValueError("transcription produced no text")
+        translated_text = translate(source_text)
     out_wav = os.path.join(out_dir, "output.wav")
 
     # Fall back to Piper when cloning was requested but the engine is not

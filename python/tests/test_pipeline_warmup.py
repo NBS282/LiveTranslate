@@ -42,6 +42,7 @@ def test_warmup_marks_cloning_available_on_success(monkeypatch):
 def test_translate_audio_falls_back_to_piper_when_cloning_unavailable(
     monkeypatch, tmp_path
 ):
+    monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola mundo")
     monkeypatch.setattr(pipeline, "translate", lambda t: "hello world")
     used = {}

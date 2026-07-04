@@ -80,6 +80,7 @@ def test_get_voice_state_rebuilds_from_wav_when_safetensors_corrupt(
 def test_translate_audio_uses_piper_when_cloned_synthesis_raises(
     monkeypatch, tmp_path
 ):
+    monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola mundo")
     monkeypatch.setattr(pipeline, "translate", lambda t: "hello world")
     monkeypatch.setattr(pipeline, "_cloning_available", True)
