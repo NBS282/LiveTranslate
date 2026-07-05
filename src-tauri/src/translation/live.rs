@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -53,20 +53,6 @@ fn write_segment_wav(samples: &[i16]) -> Result<PathBuf, String> {
     }
     w.finalize().map_err(|e| e.to_string())?;
     Ok(path)
-}
-
-/// Drains any extra segments already queued behind `first`, returning the most
-/// recent one and the number dropped. Translation on CPU is slower than real
-/// time, so segments pile up during long speech; keeping only the latest bounds
-/// the live latency instead of letting it grow without limit.
-fn drain_to_latest(rx: &Receiver<Vec<i16>>, first: Vec<i16>) -> (Vec<i16>, usize) {
-    let mut latest = first;
-    let mut dropped = 0;
-    while let Ok(newer) = rx.try_recv() {
-        latest = newer;
-        dropped += 1;
-    }
-    (latest, dropped)
 }
 
 /// Playback thread: plays each translated WAV to `output_device` serially, then
@@ -213,6 +199,7 @@ fn run_worker(
     stop: Arc<AtomicBool>,
     play_tx: Sender<PathBuf>,
     use_cloned_voice: bool,
+    pending_finals: Arc<AtomicUsize>,
 ) {
     // Tracks the previous segment's translated text (trimmed, lowercased). Canary
     // AST never produces a source_text, so the source==target echo guard below
@@ -226,11 +213,14 @@ fn run_worker(
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(samples) => {
-                // Stay current: if requests fell behind and segments queued up,
-                // keep only the most recent and drop the stale ones.
-                let (samples, dropped) = drain_to_latest(&rx, samples);
-                if dropped > 0 {
-                    eprintln!("live: dropped {dropped} stale segment(s) to stay current");
+                // Consecutive speech is content, not staleness: every received
+                // segment is translated in order so a long utterance isn't
+                // reduced to only its last chunk. `pending_finals` tracks how
+                // many segments are queued/in-flight; the partial-decode thread
+                // yields while it's nonzero so finals never wait behind partials.
+                let backlog = pending_finals.load(Ordering::Relaxed);
+                if backlog > 2 {
+                    eprintln!("live: translation backlog {backlog} segments");
                 }
 
                 // PTT diag: emit event so frontend can show producer→worker flow.
@@ -255,6 +245,7 @@ fn run_worker(
                             "min": MIN_SEGMENT_SAMPLES,
                         }),
                     );
+                    pending_finals.fetch_sub(1, Ordering::Relaxed);
                     continue;
                 }
 
@@ -276,6 +267,7 @@ fn run_worker(
                         }),
                     );
                     if e.contains("transcription produced no text") {
+                        pending_finals.fetch_sub(1, Ordering::Relaxed);
                         continue;
                     }
                 }
@@ -294,6 +286,7 @@ fn run_worker(
                                 "source": out.source_text,
                             }),
                         );
+                        pending_finals.fetch_sub(1, Ordering::Relaxed);
                         continue;
                     }
                 }
@@ -317,6 +310,7 @@ fn run_worker(
                                 "text": out.translated_text,
                             }),
                         );
+                        pending_finals.fetch_sub(1, Ordering::Relaxed);
                         continue;
                     }
                 }
@@ -341,6 +335,8 @@ fn run_worker(
                     // cleanup of the WAV and its temp dir.
                     let _ = play_tx.send(out.output_wav);
                 }
+
+                pending_finals.fetch_sub(1, Ordering::Relaxed);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => break,
@@ -373,6 +369,13 @@ pub fn start(
     let (pass_tx, pass_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let is_playing = Arc::new(AtomicBool::new(false));
+    // Shared by producer, worker, and the partial-decode thread below: the
+    // producer increments right after handing a segment to the worker, the
+    // worker decrements when it finishes that segment (every exit path —
+    // success, error, or discard), and the partial thread yields its tick
+    // while this is nonzero so finals never wait behind partials for the
+    // decode lock.
+    let pending_finals = Arc::new(AtomicUsize::new(0));
 
     // Passthrough thread: forwards mic audio at low gain during processing gaps.
     {
@@ -398,8 +401,16 @@ pub fn start(
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
+        let pending_worker = pending_finals.clone();
         std::thread::spawn(move || {
-            run_worker(seg_rx, app_clone, stop_clone, play_tx, use_cloned_voice)
+            run_worker(
+                seg_rx,
+                app_clone,
+                stop_clone,
+                play_tx,
+                use_cloned_voice,
+                pending_worker,
+            )
         });
     }
 
@@ -416,10 +427,17 @@ pub fn start(
         let seg_for_partials = segmenter.clone();
         let app_partials = app.clone();
         let stop_partials = stop.clone();
+        let pending_partials = pending_finals.clone();
         std::thread::spawn(move || {
             let mut last_len = 0usize;
             while !stop_partials.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(1200));
+                // Finals take priority: skip this tick entirely rather than
+                // contend with the worker for the Python-side decode lock
+                // while segments are queued or in flight.
+                if pending_partials.load(Ordering::Relaxed) > 0 {
+                    continue;
+                }
                 // A poisoned lock means the other thread panicked mid-push/snapshot;
                 // the segmenter state is still sound (Vec operations don't tear), so
                 // recover the guard instead of killing the live session.
@@ -468,7 +486,14 @@ pub fn start(
     let stop_prod = stop.clone();
     std::thread::spawn(move || {
         if let Err(e) = run_producer(
-            device, in_rate, channels, seg_tx, pass_tx, stop_prod, segmenter,
+            device,
+            in_rate,
+            channels,
+            seg_tx,
+            pass_tx,
+            stop_prod,
+            segmenter,
+            pending_finals,
         ) {
             eprintln!("live producer error: {e}");
         }
@@ -488,6 +513,7 @@ fn run_producer(
     pass_tx: Sender<Vec<i16>>,
     stop: Arc<AtomicBool>,
     segmenter: Arc<Mutex<Segmenter>>,
+    pending_finals: Arc<AtomicUsize>,
 ) -> Result<(), String> {
     use webrtc_vad::{SampleRate, Vad, VadMode};
 
@@ -546,7 +572,9 @@ fn run_producer(
                             .unwrap_or_else(|e| e.into_inner())
                             .push(&frame_acc, voiced);
                         if let Some(seg) = closed {
-                            let _ = seg_tx.send(seg);
+                            if seg_tx.send(seg).is_ok() {
+                                pending_finals.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                         let _ = pass_tx.send(frame_acc.clone());
                         frame_acc.clear();
@@ -676,6 +704,9 @@ pub fn start_ptt(
     let (pass_tx, pass_rx): (Sender<Vec<i16>>, Receiver<Vec<i16>>) = std::sync::mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let is_playing = Arc::new(AtomicBool::new(false));
+    // PTT has no partial-decode thread, but `run_worker` is shared with the
+    // continuous path and always expects this counter.
+    let pending_finals = Arc::new(AtomicUsize::new(0));
 
     {
         let stop_clone = stop.clone();
@@ -696,8 +727,16 @@ pub fn start_ptt(
     {
         let app_clone = app.clone();
         let stop_clone = stop.clone();
+        let pending_worker = pending_finals.clone();
         std::thread::spawn(move || {
-            run_worker(seg_rx, app_clone, stop_clone, play_tx, use_cloned_voice)
+            run_worker(
+                seg_rx,
+                app_clone,
+                stop_clone,
+                play_tx,
+                use_cloned_voice,
+                pending_worker,
+            )
         });
     }
 
@@ -711,6 +750,7 @@ pub fn start_ptt(
             pass_tx,
             stop_prod,
             ptt_recording,
+            pending_finals,
         ) {
             eprintln!("ptt producer error: {e}");
         }
@@ -734,6 +774,7 @@ fn run_producer_ptt(
     pass_tx: Sender<Vec<i16>>,
     stop: Arc<AtomicBool>,
     ptt_recording: Arc<AtomicBool>,
+    pending_finals: Arc<AtomicUsize>,
 ) -> Result<(), String> {
     let (samp_tx, samp_rx) = std::sync::mpsc::channel::<Vec<f32>>();
 
@@ -783,7 +824,9 @@ fn run_producer_ptt(
             if !ptt_buffer.is_empty() {
                 if ptt_buffer.len() >= MIN_SEGMENT_SAMPLES {
                     let seg = std::mem::take(&mut ptt_buffer);
-                    let _ = seg_tx.send(seg);
+                    if seg_tx.send(seg).is_ok() {
+                        pending_finals.fetch_add(1, Ordering::Relaxed);
+                    }
                 } else {
                     ptt_buffer.clear();
                 }
@@ -886,23 +929,5 @@ mod tests {
     fn play_nonexistent_wav_returns_err() {
         let result = play_wav_to_device(Path::new("does_not_exist_xyz.wav"), "");
         assert!(result.is_err(), "expected Err for missing WAV file");
-    }
-
-    #[test]
-    fn drain_keeps_latest_and_counts_dropped() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(vec![2i16]).unwrap();
-        tx.send(vec![3i16]).unwrap();
-        let (latest, dropped) = drain_to_latest(&rx, vec![1i16]);
-        assert_eq!(latest, vec![3i16]);
-        assert_eq!(dropped, 2);
-    }
-
-    #[test]
-    fn drain_no_backlog_returns_first_unchanged() {
-        let (_tx, rx) = std::sync::mpsc::channel::<Vec<i16>>();
-        let (latest, dropped) = drain_to_latest(&rx, vec![9i16]);
-        assert_eq!(latest, vec![9i16]);
-        assert_eq!(dropped, 0);
     }
 }
