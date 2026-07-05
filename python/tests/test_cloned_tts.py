@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 import numpy as np
+import pytest
 
 
 # ── Packaging ───────────────────────────────────────────────────────────────
@@ -307,6 +308,7 @@ class TestServerVoiceProfile:
 
 def test_pocket_tts_import_preserves_torch_threads():
     """pocket_tts sets torch to 1 thread at import; the wrapper must undo it."""
+    pytest.importorskip("pocket_tts")
     import torch
 
     from lt_engine.cloned_tts import _import_pocket_tts

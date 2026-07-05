@@ -9,12 +9,19 @@ on this language pair and is faster at inference (dedicated model, smaller vocab
 """
 from __future__ import annotations
 import os
+import threading
 import wave
 
 _asr = None
 _mt = None
 _piper = None
 _canary = None
+
+# NeMo's transcribe() mutates shared model/decoder state. /translate and
+# /transcribe-partial run on separate FastAPI threadpool threads and can call
+# it concurrently, causing a data race. Serialize all Canary decodes through
+# this lock.
+_decode_lock = threading.Lock()
 
 # Voice cloning availability, resolved once during warmup(). Cloning is an
 # optional feature: if Pocket TTS cannot load (package missing, gated model
@@ -94,15 +101,16 @@ def _get_canary():
 
 def speech_translate(audio_path: str) -> str:
     """Translate Spanish speech directly to English text (Canary AST)."""
-    out = _get_canary().transcribe(
-        [audio_path],
-        source_lang="es",
-        target_lang="en",
-        task="ast",
-        pnc="yes",
-        batch_size=1,
-        verbose=False,
-    )
+    with _decode_lock:
+        out = _get_canary().transcribe(
+            [audio_path],
+            source_lang="es",
+            target_lang="en",
+            task="ast",
+            pnc="yes",
+            batch_size=1,
+            verbose=False,
+        )
     item = out[0]
     return getattr(item, "text", item).strip()
 
@@ -130,7 +138,7 @@ def synthesize(text: str, out_wav: str) -> None:
 
 
 def warmup() -> None:
-    """Load all models eagerly. Call once at server startup.
+    """Load the active engine's models eagerly. Call once at server startup.
 
     Pocket TTS (voice cloning) is loaded best-effort: any failure is recorded
     and the server starts without cloning instead of dying. A dead server

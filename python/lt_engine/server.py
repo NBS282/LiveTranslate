@@ -6,7 +6,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-from .pipeline import cloning_available, cloning_error, speech_translate, translate_audio, warmup
+from .pipeline import (
+    cloning_available,
+    cloning_error,
+    speech_translate,
+    translate_audio,
+    translation_engine,
+    warmup,
+)
 from . import voice_profile as vp
 from .cloned_tts import reset_voice_state, export_voice_state, preprocess_reference_audio
 
@@ -62,6 +69,12 @@ def transcribe_partial(req: PartialRequest) -> dict:
     """Translate an in-progress (open) audio segment. Display-only partials."""
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
+    if translation_engine() != "canary":
+        # Legacy engine has no cheap partial-decode path. Lazy-loading Canary
+        # here would defeat the rollback guarantee (3.5GB model load under
+        # LT_TRANSLATION_ENGINE=legacy). Empty text is the established
+        # "nothing to show" signal the Rust caller swallows.
+        return {"text": ""}
     try:
         return {"text": speech_translate(req.input_path)}
     except Exception as e:

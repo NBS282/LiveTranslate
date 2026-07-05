@@ -1,4 +1,6 @@
 """Canary AST engine routing. The model itself is mocked (3.5 GB download)."""
+import threading
+import time
 from types import SimpleNamespace
 
 import lt_engine.pipeline as pipeline
@@ -99,3 +101,47 @@ def test_warmup_legacy_engine_loads_parakeet_and_marian(monkeypatch):
 
     assert "asr" in calls and "mt" in calls
     assert "canary" not in calls
+
+
+def test_speech_translate_serializes_concurrent_decodes(monkeypatch):
+    """/translate and /transcribe-partial can call speech_translate from two
+    FastAPI threadpool threads at once. NeMo's transcribe() mutates shared
+    model state, so overlapping calls must never run concurrently — the
+    module-level _decode_lock must serialize them."""
+
+    class FakeConcurrentCanary:
+        def __init__(self):
+            self.in_use = False
+
+        def transcribe(self, paths, **kwargs):
+            if self.in_use:
+                raise AssertionError("transcribe() re-entered while in use")
+            self.in_use = True
+            try:
+                time.sleep(0.05)
+                return [SimpleNamespace(text=f"result for {paths[0]}")]
+            finally:
+                self.in_use = False
+
+    fake = FakeConcurrentCanary()
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
+
+    results = {}
+    errors = []
+
+    def call(path):
+        try:
+            results[path] = pipeline.speech_translate(path)
+        except Exception as e:  # noqa: BLE001 — capture to fail the test explicitly
+            errors.append(e)
+
+    t1 = threading.Thread(target=call, args=("a.wav",))
+    t2 = threading.Thread(target=call, args=("b.wav",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"concurrent decode raised: {errors}"
+    assert results["a.wav"] == "result for a.wav"
+    assert results["b.wav"] == "result for b.wav"
