@@ -214,6 +214,15 @@ fn run_worker(
     play_tx: Sender<PathBuf>,
     use_cloned_voice: bool,
 ) {
+    // Tracks the previous segment's translated text (trimmed, lowercased). Canary
+    // AST never produces a source_text, so the source==target echo guard below
+    // is dead for it; this catches the same echo/feedback risk (output device
+    // audio bleeding back into the mic) by comparing consecutive translations
+    // instead. Refreshed on every successful translation, independent of the
+    // guards below, so a run of repeats is judged against the immediately
+    // preceding segment.
+    let mut prev_translated_lower = String::new();
+
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(samples) => {
@@ -283,6 +292,29 @@ fn run_worker(
                             serde_json::json!({
                                 "event": "skipped-source-equals-target",
                                 "source": out.source_text,
+                            }),
+                        );
+                        continue;
+                    }
+                }
+
+                // Cheap echo mitigation for Canary AST: source_text is always empty
+                // for AST, so the source==target guard above can never fire for it.
+                // If the translated text repeats the previous segment's output
+                // verbatim, it's very likely echo/feedback (output device audio
+                // bleeding into the mic) rather than genuinely repeated speech.
+                if let Ok(ref out) = translate_result {
+                    let translated_lower = out.translated_text.trim().to_lowercase();
+                    let is_echo = out.source_text.is_empty()
+                        && !translated_lower.is_empty()
+                        && translated_lower == prev_translated_lower;
+                    prev_translated_lower = translated_lower;
+                    if is_echo {
+                        let _ = app.emit(
+                            "ptt-diag",
+                            serde_json::json!({
+                                "event": "skipped-duplicate-translation",
+                                "text": out.translated_text,
                             }),
                         );
                         continue;
@@ -398,7 +430,12 @@ pub fn start(
                 let Some(samples) = snap else {
                     if last_len != 0 {
                         last_len = 0;
-                        let _ = app_partials.emit("partial", serde_json::json!({ "text": "" }));
+                        // Re-check right before emitting: stop() may have landed
+                        // while we were locking/snapshotting, and a partial must
+                        // never reach the UI after the session is torn down.
+                        if !stop_partials.load(Ordering::Relaxed) {
+                            let _ = app_partials.emit("partial", serde_json::json!({ "text": "" }));
+                        }
                     }
                     continue;
                 };
@@ -411,8 +448,13 @@ pub fn start(
                 if let Ok(path) = write_segment_wav(&samples) {
                     match crate::translation::engine_server::transcribe_partial(&path) {
                         Ok(text) if !text.is_empty() => {
-                            let _ =
-                                app_partials.emit("partial", serde_json::json!({ "text": text }));
+                            // Re-check right before emitting: the decode above can
+                            // take up to the 10s timeout, long enough for stop() to
+                            // have landed in the meantime.
+                            if !stop_partials.load(Ordering::Relaxed) {
+                                let _ = app_partials
+                                    .emit("partial", serde_json::json!({ "text": text }));
+                            }
                         }
                         _ => {}
                     }

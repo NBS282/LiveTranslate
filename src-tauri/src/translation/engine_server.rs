@@ -339,8 +339,9 @@ pub fn delete_voice_profile() -> Result<(), String> {
     Ok(())
 }
 
-/// Sends an open (in-progress) segment for partial translation. Short
-/// timeout: a stale partial is worthless, drop it and try the next tick.
+/// Sends an open (in-progress) segment for partial translation. The 10s
+/// timeout bounds a stalled decode rather than chasing freshness — a partial
+/// that arrives late is simply dropped by the next tick's `last_len` check.
 pub fn transcribe_partial(input: &Path) -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
