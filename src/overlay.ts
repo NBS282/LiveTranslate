@@ -234,7 +234,15 @@ void listen<{ source_text: string; translated_text: string; error: string | null
     await win.show();
     if (myEpoch !== epoch) return; // a newer phrase took over
     subtitle.classList.add("visible");
-    srcText.textContent = `ES: ${e.payload.source_text}`;
+    // Canary AST produces no Spanish transcript (source_text === ""). Hide the
+    // "ES:" line entirely instead of showing an empty label.
+    if (e.payload.source_text) {
+      srcText.textContent = `ES: ${e.payload.source_text}`;
+      srcText.style.display = "";
+    } else {
+      srcText.textContent = "";
+      srcText.style.display = "none";
+    }
     // Fill the full text so the card has its final size when we measure.
     tgtChars.textContent = e.payload.translated_text;
     await resizeToContent();

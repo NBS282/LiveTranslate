@@ -74,7 +74,11 @@ void listen<{ text: string }>("partial", (e) => {
   }
   partialEl.textContent = e.payload.text;
   partialEl.classList.remove("hidden");
-  phrases.prepend(partialEl); // re-pin above any phrases finalized meanwhile
+  // Only re-pin when a finalized phrase actually landed above it — re-prepending
+  // an already-first node restarts its CSS phrase-in animation every tick.
+  if (phrases.firstElementChild !== partialEl) {
+    phrases.prepend(partialEl);
+  }
 });
 
 // ── Phrase listener ───────────────────────────────────────────────────────────
@@ -88,19 +92,26 @@ void listen<{ source_text: string; translated_text: string; error: string | null
       li.textContent = e.payload.error;
       li.classList.add("error");
     } else {
-      const src = document.createElement("span");
-      src.style.color = "var(--muted)";
-      src.textContent = `ES: ${e.payload.source_text}`;
-
-      const arrow = document.createElement("span");
-      arrow.style.color = "var(--accent)";
-      arrow.textContent = " → ";
-
       const tgt = document.createElement("span");
       tgt.style.color = "var(--text)";
       tgt.textContent = `EN: ${e.payload.translated_text}`;
 
-      li.append(src, arrow, tgt);
+      // Canary AST produces no Spanish transcript (source_text === ""). Show
+      // only the translated text instead of an empty "ES: " line with an
+      // arrow pointing at nothing.
+      if (e.payload.source_text) {
+        const src = document.createElement("span");
+        src.style.color = "var(--muted)";
+        src.textContent = `ES: ${e.payload.source_text}`;
+
+        const arrow = document.createElement("span");
+        arrow.style.color = "var(--accent)";
+        arrow.textContent = " → ";
+
+        li.append(src, arrow, tgt);
+      } else {
+        li.append(tgt);
+      }
     }
     phrases.prepend(li);
   },
@@ -286,6 +297,9 @@ async function stopSession(): Promise<void> {
     await invoke("stop_live_translation");
     listening = false;
     setToggle(false);
+    // A stale dimmed partial line must never survive a stop — the Rust worker
+    // may have a partial decode in flight when stop lands.
+    clearPartial();
     void (await overlay())?.hide();
   } catch (err) {
     statusEl.textContent = `Error: ${err}`;
