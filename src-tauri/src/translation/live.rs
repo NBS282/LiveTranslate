@@ -80,11 +80,13 @@ fn run_playback(
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(250)) {
             Ok(wav) => {
+                eprintln!("live: playback start {}", wav.display());
                 is_playing.store(true, Ordering::Relaxed);
                 if let Err(e) = play_wav_to_device(&wav, &output_device) {
                     eprintln!("playback error: {e}");
                 }
                 is_playing.store(false, Ordering::Relaxed);
+                eprintln!("live: playback done  {}", wav.display());
                 let _ = std::fs::remove_file(&wav);
                 if let Some(dir) = wav.parent() {
                     let _ = std::fs::remove_dir(dir);
@@ -235,6 +237,11 @@ fn run_worker(
                     eprintln!("live: translation backlog {backlog} segments");
                 }
 
+                eprintln!(
+                    "live: segment received ({:.1}s, backlog {backlog})",
+                    samples.len() as f64 / 16_000.0
+                );
+
                 // PTT diag: emit event so frontend can show producer→worker flow.
                 let _ = app.emit(
                     "ptt-diag",
@@ -249,6 +256,7 @@ fn run_worker(
                 // Whisper hallucinates or returns no text on very short clips; the VAD
                 // min-voiced guard is the first line of defense, this is the fallback.
                 if samples.len() < MIN_SEGMENT_SAMPLES {
+                    eprintln!("live: segment skipped (too short)");
                     let _ = app.emit(
                         "ptt-diag",
                         serde_json::json!({
@@ -267,6 +275,11 @@ fn run_worker(
                     let _ = std::fs::remove_file(&p);
                     result
                 });
+
+                match &translate_result {
+                    Ok(out) => eprintln!("live: segment translated -> {:.60}", out.translated_text),
+                    Err(e) => eprintln!("live: segment translate FAILED: {e:.120}"),
+                }
 
                 // 422 "transcription produced no text" means Whisper got audio but found
                 // no speech — silence, breath, or mic bleed. Skip the event silently.
@@ -291,6 +304,7 @@ fn run_worker(
                     if out.source_text.trim().to_lowercase()
                         == out.translated_text.trim().to_lowercase()
                     {
+                        eprintln!("live: segment skipped (source == target)");
                         let _ = app.emit(
                             "ptt-diag",
                             serde_json::json!({
@@ -315,6 +329,7 @@ fn run_worker(
                         && translated_lower == prev_translated_lower;
                     prev_translated_lower = translated_lower;
                     if is_echo {
+                        eprintln!("live: segment skipped (duplicate translation)");
                         let _ = app.emit(
                             "ptt-diag",
                             serde_json::json!({
@@ -345,6 +360,7 @@ fn run_worker(
                     // Hand off to the playback thread so the next segment can be
                     // translated while this one plays. The playback thread owns
                     // cleanup of the WAV and its temp dir.
+                    eprintln!("live: segment enqueued for playback");
                     let _ = play_tx.send(out.output_wav);
                 }
 
@@ -497,6 +513,9 @@ pub fn start(
                         // is stale and would mis-arm a brand-new segment.
                         let mut seg = seg_for_partials.lock().unwrap_or_else(|e| e.into_inner());
                         if seg.generation() == gen_at_snapshot {
+                            if arm {
+                                eprintln!("live: fast-close armed (sentence end seen)");
+                            }
                             seg.set_fast_close(arm);
                         }
                     }
@@ -607,6 +626,7 @@ fn run_producer(
                             .unwrap_or_else(|e| e.into_inner())
                             .push(&frame_acc, voiced);
                         if let Some(seg) = closed {
+                            eprintln!("live: segment closed ({:.1}s)", seg.len() as f64 / 16_000.0);
                             if seg_tx.send(seg).is_ok() {
                                 pending_finals.fetch_add(1, Ordering::Relaxed);
                             }
