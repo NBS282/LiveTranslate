@@ -1,6 +1,11 @@
 /// Samples per 30ms frame at 16 kHz mono.
 pub const FRAME_SAMPLES_16K: usize = 480;
 
+/// Trailing-silence frame count that closes a segment when `fast_close` is armed
+/// (~90ms at 30ms/frame) — short enough to catch a real inter-sentence micro-pause
+/// without cutting mid-word.
+pub const FAST_CLOSE_FRAMES: u32 = 3;
+
 /// Closes a speech segment after enough trailing silence or after `max_frames` of
 /// accumulated audio, whichever comes first. Drops segments shorter than `min_voiced`.
 /// Fed one fixed-size frame at a time with its VAD voiced/unvoiced flag.
@@ -12,6 +17,12 @@ pub struct Segmenter {
     voiced_count: u32,
     trailing_silence: u32,
     buf: Vec<i16>,
+    /// Armed by the caller (e.g. the partial-decode thread) when the in-progress
+    /// translation just ended a sentence. Shortens the trailing-silence threshold
+    /// to `FAST_CLOSE_FRAMES` so the NEXT brief VAD dip closes the segment at a
+    /// real micro-pause instead of waiting for the full `silence_close` window.
+    /// Auto-resets to `false` on every close path.
+    fast_close: bool,
 }
 
 impl Segmenter {
@@ -24,7 +35,15 @@ impl Segmenter {
             voiced_count: 0,
             trailing_silence: 0,
             buf: Vec::new(),
+            fast_close: false,
         }
+    }
+
+    /// Arms (or disarms) the fast-close window. When armed, the next
+    /// `FAST_CLOSE_FRAMES` trailing-silence frames close the segment instead of
+    /// waiting for the full `silence_close` count. Auto-resets on every close.
+    pub fn set_fast_close(&mut self, on: bool) {
+        self.fast_close = on;
     }
 
     /// Push one frame. Returns Some(samples) when a phrase closes (and passes the min-length gate).
@@ -43,7 +62,12 @@ impl Segmenter {
         }
 
         let buf_frames = (self.buf.len() / FRAME_SAMPLES_16K) as u32;
-        let silence_triggered = !voiced && self.trailing_silence >= self.silence_close;
+        let silence_close = if self.fast_close {
+            FAST_CLOSE_FRAMES.min(self.silence_close)
+        } else {
+            self.silence_close
+        };
+        let silence_triggered = !voiced && self.trailing_silence >= silence_close;
         let max_triggered = buf_frames >= self.max_frames;
 
         if silence_triggered || max_triggered {
@@ -52,6 +76,7 @@ impl Segmenter {
             self.in_speech = false;
             self.voiced_count = 0;
             self.trailing_silence = 0;
+            self.fast_close = false;
             if voiced_count >= self.min_voiced {
                 return Some(segment);
             }
@@ -158,5 +183,34 @@ mod tests {
         s.push(&frame(), true);
         let snap = s.snapshot().expect("open segment should snapshot");
         assert_eq!(snap.len(), 2 * FRAME_SAMPLES_16K);
+    }
+
+    #[test]
+    fn fast_close_shortens_silence_window() {
+        let mut s = Segmenter::new(8, 1, 1000);
+        s.push(&frame(), true);
+        s.set_fast_close(true);
+        s.push(&frame(), false);
+        s.push(&frame(), false);
+        assert!(
+            s.push(&frame(), false).is_some(),
+            "3 silence frames close when armed"
+        );
+    }
+
+    #[test]
+    fn fast_close_resets_after_segment_closes() {
+        let mut s = Segmenter::new(8, 1, 1000);
+        s.push(&frame(), true);
+        s.set_fast_close(true);
+        for _ in 0..2 {
+            s.push(&frame(), false);
+        }
+        assert!(s.push(&frame(), false).is_some());
+        // New segment: 3 silence frames must NOT close it anymore.
+        s.push(&frame(), true);
+        for _ in 0..3 {
+            assert!(s.push(&frame(), false).is_none());
+        }
     }
 }

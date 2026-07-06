@@ -18,6 +18,18 @@ const MIN_SEGMENT_SAMPLES: usize = 8_000;
 /// Low enough to be a "comfort signal" without drowning out the caller.
 const PASSTHROUGH_GAIN: f32 = 0.20;
 
+/// True when `text` ends a sentence: trims trailing whitespace and closing
+/// quotes, then checks whether the last remaining char is `.`, `!`, `?`, or an
+/// ellipsis (`…`). Used to arm the segmenter's fast-close window so the next
+/// brief VAD dip cuts at a real inter-sentence pause.
+fn ends_sentence(text: &str) -> bool {
+    let trimmed = text
+        .trim_end()
+        .trim_end_matches(['"', '\'', '\u{201d}', '\u{2019}'])
+        .trim_end();
+    matches!(trimmed.chars().last(), Some('.' | '!' | '?' | '…'))
+}
+
 #[derive(Clone, Serialize)]
 pub struct PhraseEvent {
     pub source_text: String,
@@ -466,6 +478,17 @@ pub fn start(
                 if let Ok(path) = write_segment_wav(&samples) {
                     match crate::translation::engine_server::transcribe_partial(&path) {
                         Ok(text) if !text.is_empty() => {
+                            // Interpreter-style fast close: arm the segmenter's fast
+                            // close only once the in-progress translation reads as a
+                            // complete sentence AND we've captured enough audio (2s)
+                            // to trust the punctuation isn't a mid-utterance artifact.
+                            // A poisoned lock is recovered the same way as the
+                            // snapshot() call above — held only for this setter.
+                            let arm = ends_sentence(&text) && samples.len() >= 32_000;
+                            seg_for_partials
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .set_fast_close(arm);
                             // Re-check right before emitting: the decode above can
                             // take up to the 10s timeout, long enough for stop() to
                             // have landed in the meantime.
@@ -895,6 +918,29 @@ impl SimpleResampler {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn ends_sentence_detects_terminal_punctuation() {
+        assert!(ends_sentence("Hello there."));
+        assert!(ends_sentence("Wait!"));
+        assert!(ends_sentence("Really?"));
+        assert!(ends_sentence("Well…"));
+    }
+
+    #[test]
+    fn ends_sentence_handles_trailing_closing_quotes() {
+        assert!(ends_sentence("She said \"stop.\""));
+        assert!(ends_sentence("She said \"stop.\" "));
+        assert!(ends_sentence("He asked 'why?'"));
+    }
+
+    #[test]
+    fn ends_sentence_false_for_mid_sentence_or_empty() {
+        assert!(!ends_sentence(""));
+        assert!(!ends_sentence("   "));
+        assert!(!ends_sentence("and then he"));
+        assert!(!ends_sentence("wait, so"));
+    }
 
     #[test]
     fn mono_to_stereo_duplicates_each_sample() {
