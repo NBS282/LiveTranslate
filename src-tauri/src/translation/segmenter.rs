@@ -23,6 +23,11 @@ pub struct Segmenter {
     /// real micro-pause instead of waiting for the full `silence_close` window.
     /// Auto-resets to `false` on every close path.
     fast_close: bool,
+    /// Counts segment closes (every close path, including below-min_voiced
+    /// drops). Lets callers detect that the segment they analyzed already
+    /// closed while they were off doing slow work (e.g. a partial decode), so
+    /// a stale decision never re-arms `fast_close` on a brand-new segment.
+    generation: u64,
 }
 
 impl Segmenter {
@@ -36,7 +41,14 @@ impl Segmenter {
             trailing_silence: 0,
             buf: Vec::new(),
             fast_close: false,
+            generation: 0,
         }
+    }
+
+    /// Number of segment closes so far. Incremented on every close path;
+    /// unchanged by pushes that keep the segment open.
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Arms (or disarms) the fast-close window. When armed, the next
@@ -77,6 +89,7 @@ impl Segmenter {
             self.voiced_count = 0;
             self.trailing_silence = 0;
             self.fast_close = false;
+            self.generation += 1;
             if voiced_count >= self.min_voiced {
                 return Some(segment);
             }
@@ -196,6 +209,23 @@ mod tests {
             s.push(&frame(), false).is_some(),
             "3 silence frames close when armed"
         );
+    }
+
+    #[test]
+    fn generation_increments_on_close_only() {
+        let mut s = Segmenter::new(2, 1, 1000);
+        assert_eq!(s.generation(), 0);
+        // Pushes that do not close a segment leave the generation unchanged.
+        s.push(&frame(), true);
+        assert_eq!(s.generation(), 0);
+        s.push(&frame(), false);
+        assert_eq!(s.generation(), 0);
+        // Silence close fires here.
+        assert!(s.push(&frame(), false).is_some());
+        assert_eq!(s.generation(), 1);
+        // Silence outside speech never closes anything.
+        s.push(&frame(), false);
+        assert_eq!(s.generation(), 1);
     }
 
     #[test]

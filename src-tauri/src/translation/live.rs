@@ -453,10 +453,13 @@ pub fn start(
                 // A poisoned lock means the other thread panicked mid-push/snapshot;
                 // the segmenter state is still sound (Vec operations don't tear), so
                 // recover the guard instead of killing the live session.
-                let snap = seg_for_partials
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .snapshot();
+                // Snapshot and generation are read under ONE guard so they describe
+                // the same segment: the generation lets us detect, after the slow
+                // decode below, whether that segment already closed in the meantime.
+                let (snap, gen_at_snapshot) = {
+                    let seg = seg_for_partials.lock().unwrap_or_else(|e| e.into_inner());
+                    (seg.snapshot(), seg.generation())
+                };
                 let Some(samples) = snap else {
                     if last_len != 0 {
                         last_len = 0;
@@ -476,19 +479,30 @@ pub fn start(
                 }
                 last_len = samples.len();
                 if let Ok(path) = write_segment_wav(&samples) {
-                    match crate::translation::engine_server::transcribe_partial(&path) {
-                        Ok(text) if !text.is_empty() => {
-                            // Interpreter-style fast close: arm the segmenter's fast
-                            // close only once the in-progress translation reads as a
-                            // complete sentence AND we've captured enough audio (2s)
-                            // to trust the punctuation isn't a mid-utterance artifact.
-                            // A poisoned lock is recovered the same way as the
-                            // snapshot() call above — held only for this setter.
-                            let arm = ends_sentence(&text) && samples.len() >= 32_000;
-                            seg_for_partials
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .set_fast_close(arm);
+                    let decode = crate::translation::engine_server::transcribe_partial(&path);
+                    let _ = std::fs::remove_file(&path);
+
+                    // Interpreter-style fast close: arm only when the in-progress
+                    // translation reads as a complete sentence AND we captured
+                    // enough audio (2s) to trust the punctuation isn't a
+                    // mid-utterance artifact. A failed or empty decode disarms —
+                    // a stale "sentence ended" must not survive up to 10s of
+                    // decode failures while the user is mid-sentence.
+                    let arm = samples.len() >= 32_000 && decode.as_deref().is_ok_and(ends_sentence);
+                    {
+                        // The decode can take seconds; the segment we analyzed may
+                        // have closed meanwhile (normal 240ms silence), resetting
+                        // the flag and starting a new segment. Only touch the flag
+                        // if the generation is unchanged — otherwise our decision
+                        // is stale and would mis-arm a brand-new segment.
+                        let mut seg = seg_for_partials.lock().unwrap_or_else(|e| e.into_inner());
+                        if seg.generation() == gen_at_snapshot {
+                            seg.set_fast_close(arm);
+                        }
+                    }
+
+                    if let Ok(text) = decode {
+                        if !text.is_empty() {
                             // Re-check right before emitting: the decode above can
                             // take up to the 10s timeout, long enough for stop() to
                             // have landed in the meantime.
@@ -497,9 +511,7 @@ pub fn start(
                                     .emit("partial", serde_json::json!({ "text": text }));
                             }
                         }
-                        _ => {}
                     }
-                    let _ = std::fs::remove_file(&path);
                 }
             }
         });
