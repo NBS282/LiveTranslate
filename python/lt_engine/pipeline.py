@@ -9,6 +9,7 @@ on this language pair and is faster at inference (dedicated model, smaller vocab
 """
 from __future__ import annotations
 import os
+import re
 import threading
 import wave
 
@@ -99,6 +100,9 @@ def _get_canary():
     return _canary
 
 
+_SPECIAL_TOKEN = re.compile(r"<\|[^|>]*\|>")
+
+
 def speech_translate(audio_path: str) -> str:
     """Translate Spanish speech directly to English text (Canary AST)."""
     with _decode_lock:
@@ -112,7 +116,13 @@ def speech_translate(audio_path: str) -> str:
             verbose=False,
         )
     item = out[0]
-    return getattr(item, "text", item).strip()
+    text = _SPECIAL_TOKEN.sub("", getattr(item, "text", item)).strip()
+    # Near-silent clips make the decoder emit degenerate output (raw special
+    # tokens, stray punctuation). If nothing alphanumeric survives, treat the
+    # segment as silence so the caller skips it instead of speaking garbage.
+    if not any(c.isalnum() for c in text):
+        return ""
+    return text
 
 
 def transcribe(audio_path: str) -> str:

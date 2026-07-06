@@ -145,3 +145,19 @@ def test_speech_translate_serializes_concurrent_decodes(monkeypatch):
     assert not errors, f"concurrent decode raised: {errors}"
     assert results["a.wav"] == "result for a.wav"
     assert results["b.wav"] == "result for b.wav"
+
+
+def test_speech_translate_strips_special_tokens(monkeypatch):
+    """Near-silent segments make the decoder emit raw special tokens like
+    <|endoftext|>) — regression: that garbage was displayed and synthesized."""
+    fake = FakeCanary(text=" <|endoftext|>) ")
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
+
+    assert pipeline.speech_translate("in.wav") == ""
+
+
+def test_speech_translate_strips_tokens_but_keeps_real_text(monkeypatch):
+    fake = FakeCanary(text="Hello there.<|endoftext|>")
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
+
+    assert pipeline.speech_translate("in.wav") == "Hello there."
