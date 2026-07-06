@@ -272,7 +272,27 @@ fn run_worker(
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
                     let result =
                         crate::translation::engine_server::translate_ex(&p, use_cloned_voice);
-                    let _ = std::fs::remove_file(&p);
+                    if result.is_err() {
+                        // Keep the audio of failed segments for post-mortem: an
+                        // "empty transcription" on real speech is a decode bug we
+                        // can only diagnose by re-running the exact input offline.
+                        let keep =
+                            crate::translation::sidecar::repo_root()
+                                .join("logs")
+                                .join(format!(
+                                    "failed-{}",
+                                    p.file_name().unwrap_or_default().to_string_lossy()
+                                ));
+                        let _ = std::fs::create_dir_all(keep.parent().unwrap());
+                        match std::fs::rename(&p, &keep) {
+                            Ok(()) => eprintln!("live: failed segment kept at {}", keep.display()),
+                            Err(_) => {
+                                let _ = std::fs::remove_file(&p);
+                            }
+                        }
+                    } else {
+                        let _ = std::fs::remove_file(&p);
+                    }
                     result
                 });
 
