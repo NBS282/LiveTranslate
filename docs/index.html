@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LiveTranslate: Real-time voice translation</title>
   <meta name="description" content="Speak in Spanish, be heard in English. Real-time voice translation that runs 100% locally, no cloud, no API keys." />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="icon" href="icon.png" type="image/png" sizes="128x128" />
+  <link rel="apple-touch-icon" href="icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -82,17 +85,15 @@
     .logo-mark {
       width: 32px;
       height: 32px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, var(--es) 0 50%, var(--en) 50% 100%);
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--paper);
       flex-shrink: 0;
       box-shadow: 0 2px 8px rgba(193,80,46,.15), 0 2px 8px rgba(32,69,126,.15);
+      border-radius: 7px;
     }
 
-    .logo-mark svg { width: 17px; height: 17px; }
+    .logo-mark img { width: 100%; height: 100%; border-radius: 7px; }
 
     .nav-links {
       display: flex;
@@ -162,6 +163,20 @@
       font-size: 1rem;
       color: var(--ink-2);
       line-height: 1.55;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      margin-top: 0.85rem;
+      padding: 0.35rem 0.9rem;
+      border: 1px solid var(--es);
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--es);
+      background: rgba(193, 80, 46, 0.06);
     }
 
     .cta-row {
@@ -406,18 +421,13 @@
   <div class="nav-inner">
   <a href="#" class="nav-logo">
     <span class="logo-mark">
-      <svg viewBox="0 0 30 26" fill="none">
-        <rect x="2" y="2" width="19" height="14" rx="3.5" fill="white"/>
-        <polygon points="4,16 10,16 7,21" fill="white"/>
-        <rect x="9" y="6" width="19" height="14" rx="3.5" fill="white" opacity="0.5"/>
-        <polygon points="18,20 25,20 23,25" fill="white" opacity="0.5"/>
-      </svg>
+      <img src="icon.svg" alt="LiveTranslate" />
     </span>
     <span class="logo-word"><span class="logo-live">Live</span><span class="logo-translate">Translate</span></span>
   </a>
 
   <div class="nav-links">
-    <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.2.1/LiveTranslate_0.2.1_x64-setup.exe">download</a>
+    <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.3.0/LiveTranslate_0.3.0_x64-setup.exe">download</a>
     <a href="https://github.com/NBS282/LiveTranslate/blob/main/README.md">docs</a>
     <a href="https://github.com/NBS282/LiveTranslate" class="nav-icon" aria-label="GitHub">
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -461,10 +471,11 @@
           <span class="en">be heard in any language.</span>
         </h1>
         <p class="hero-sub">real-time voice translation, 100% local, no cloud, no API keys</p>
+        <span class="hero-badge">✦ New — Voice cloning: be heard in your own voice</span>
       </div>
     </div>
     <div class="cta-row">
-      <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.2.1/LiveTranslate_0.2.1_x64-setup.exe" class="btn-primary">
+      <a href="https://github.com/NBS282/LiveTranslate/releases/download/v0.3.0/LiveTranslate_0.3.0_x64-setup.exe" class="btn-primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
         </svg>
