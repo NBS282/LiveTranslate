@@ -67,6 +67,50 @@ fn write_segment_wav(samples: &[i16]) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Maximum failed-segment WAVs kept for diagnosis. These are raw mic audio, so
+/// the directory is ring-buffered: oldest files are pruned when new ones arrive.
+const MAX_FAILED_SEGMENTS: usize = 10;
+
+/// Moves a failed segment WAV into <root>/logs for offline post-mortem,
+/// pruning the oldest kept files beyond `MAX_FAILED_SEGMENTS`.
+fn keep_failed_segment(p: &std::path::Path) {
+    let logs = crate::translation::sidecar::repo_root().join("logs");
+    let keep = logs.join(format!(
+        "failed-{}",
+        p.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let _ = std::fs::create_dir_all(&logs);
+    // %TEMP% and the data dir can live on different volumes in a packaged
+    // install, where rename fails cross-device — fall back to copy+delete.
+    let kept = std::fs::rename(p, &keep).is_ok()
+        || (std::fs::copy(p, &keep).is_ok() && {
+            let _ = std::fs::remove_file(p);
+            true
+        });
+    if !kept {
+        let _ = std::fs::remove_file(p);
+        return;
+    }
+    eprintln!("live: failed segment kept at {}", keep.display());
+
+    // Prune: keep only the newest MAX_FAILED_SEGMENTS failed-*.wav files.
+    if let Ok(entries) = std::fs::read_dir(&logs) {
+        let mut failed: Vec<_> = entries
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name().to_string_lossy().starts_with("failed-")
+                    && e.file_name().to_string_lossy().ends_with(".wav")
+            })
+            .collect();
+        // Names embed a nanosecond timestamp, so lexical order is age order.
+        failed.sort_by_key(|e| e.file_name());
+        while failed.len() > MAX_FAILED_SEGMENTS {
+            let oldest = failed.remove(0);
+            let _ = std::fs::remove_file(oldest.path());
+        }
+    }
+}
+
 /// Playback thread: plays each translated WAV to `output_device` serially, then
 /// deletes the file and its temp dir. Kept separate from the worker so playback
 /// (which runs at ~real time) never blocks translation of the next segment.
@@ -272,24 +316,13 @@ fn run_worker(
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
                     let result =
                         crate::translation::engine_server::translate_ex(&p, use_cloned_voice);
-                    if result.is_err() {
-                        // Keep the audio of failed segments for post-mortem: an
-                        // "empty transcription" on real speech is a decode bug we
-                        // can only diagnose by re-running the exact input offline.
-                        let keep =
-                            crate::translation::sidecar::repo_root()
-                                .join("logs")
-                                .join(format!(
-                                    "failed-{}",
-                                    p.file_name().unwrap_or_default().to_string_lossy()
-                                ));
-                        let _ = std::fs::create_dir_all(keep.parent().unwrap());
-                        match std::fs::rename(&p, &keep) {
-                            Ok(()) => eprintln!("live: failed segment kept at {}", keep.display()),
-                            Err(_) => {
-                                let _ = std::fs::remove_file(&p);
-                            }
-                        }
+                    // Keep the audio of failed LONG segments for post-mortem: an
+                    // "empty transcription" on >=4s of VAD-voiced audio is a decode
+                    // bug we can only diagnose by re-running the exact input offline.
+                    // Short failures are breath tails (expected, benign) — retaining
+                    // those would accumulate raw mic audio on disk for no value.
+                    if result.is_err() && samples.len() >= 64_000 {
+                        keep_failed_segment(&p);
                     } else {
                         let _ = std::fs::remove_file(&p);
                     }

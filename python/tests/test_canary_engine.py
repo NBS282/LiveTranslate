@@ -238,3 +238,24 @@ def test_speech_translate_no_bisect_for_short_clips(tmp_path, monkeypatch):
 
     assert pipeline.speech_translate(str(src)) == ""
     assert calls["n"] == 1
+
+
+def test_speech_translate_partials_never_bisect(tmp_path, monkeypatch):
+    """The partial hot path must do exactly one decode even on empty output."""
+    import numpy as np
+    import soundfile as sf
+
+    audio = np.sin(np.linspace(0, 4000 * np.pi, 128_000)).astype("float32") * 0.5
+    src = tmp_path / "partial.wav"
+    sf.write(str(src), audio, 16_000)
+
+    calls = {"n": 0}
+
+    def fake_decode(path):
+        calls["n"] += 1
+        return ""
+
+    monkeypatch.setattr(pipeline, "_decode_ast", fake_decode)
+
+    assert pipeline.speech_translate(str(src), allow_bisect=False) == ""
+    assert calls["n"] == 1

@@ -76,7 +76,7 @@ def transcribe_partial(req: PartialRequest) -> dict:
         # "nothing to show" signal the Rust caller swallows.
         return {"text": ""}
     try:
-        return {"text": speech_translate(req.input_path)}
+        return {"text": speech_translate(req.input_path, allow_bisect=False)}
     except Exception as e:
         import traceback
         traceback.print_exc()

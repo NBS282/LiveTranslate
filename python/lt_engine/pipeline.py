@@ -165,12 +165,18 @@ def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
     return " ".join(part for part in (left, right) if part)
 
 
-def speech_translate(audio_path: str) -> str:
+def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
     """Translate Spanish speech directly to English text (Canary AST).
 
     The clip is peak-normalized before decoding: quiet mic captures
     (peak ~0.1) make Canary collapse to an empty or degenerate decode that
     the model handles fine at normal levels.
+
+    Args:
+        audio_path: Path to a 16 kHz WAV file.
+        allow_bisect: Recover empty decodes of long clips by decoding halves.
+            Disable on the partial-decode hot path, where an empty result is
+            transient and two extra decodes per tick would starve finals.
     """
     import numpy as np
     import soundfile as sf
@@ -182,7 +188,7 @@ def speech_translate(audio_path: str) -> str:
     if peak > 1e-4:
         audio = audio * (0.9 / peak)
 
-    return _decode_or_bisect(audio, sample_rate, depth=1)
+    return _decode_or_bisect(audio, sample_rate, depth=1 if allow_bisect else 0)
 
 
 def transcribe(audio_path: str) -> str:
