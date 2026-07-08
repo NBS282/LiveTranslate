@@ -63,7 +63,7 @@ def test_translate_missing_file_400(monkeypatch):
 
 def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "speech_translate", lambda p: "Partial text")
+    monkeypatch.setattr(server, "speech_translate", lambda p, **kw: "Partial text")
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
@@ -101,7 +101,7 @@ def test_transcribe_partial_returns_empty_under_legacy_engine(monkeypatch, tmp_p
 def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
 
-    def boom(path):
+    def boom(path, **kw):
         raise RuntimeError("decoder exploded")
 
     monkeypatch.setattr(server, "speech_translate", boom)
