@@ -360,7 +360,9 @@
 
     .pipeline {
       display: flex;
-      align-items: center;
+      /* Top-aligned so connectors can sit exactly on the icon axis
+         (icon center = step padding 1rem + half of the 44px icon). */
+      align-items: flex-start;
       justify-content: center;
       gap: 0;
       /* Single row on desktop — the mobile media query stacks it vertically. */
@@ -413,13 +415,63 @@
       flex-shrink: 0;
       display: flex;
       align-items: center;
-      margin-bottom: 1.4rem;
+      /* Center the 16px arrow on the icon axis (1rem padding + 22px). */
+      margin-top: calc(1rem + 22px - 8px);
     }
 
     .pipeline-arrow svg {
       width: 16px;
       height: 16px;
     }
+
+    .pipeline-fork,
+    .pipeline-merge {
+      color: var(--ink-3);
+      flex-shrink: 0;
+      /* 96px-tall connector centered on the icon axis. */
+      margin-top: calc(1rem + 22px - 48px);
+    }
+
+    .pipeline-fork svg,
+    .pipeline-merge svg {
+      width: 40px;
+      height: 96px;
+    }
+
+    .pipeline-branches {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      /* Two ~38px cards + gap ≈ 87px tall, centered on the icon axis. */
+      margin-top: calc(1rem + 22px - 43px);
+    }
+
+    .pipeline-substep {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.45rem 0.8rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--paper);
+      white-space: nowrap;
+    }
+
+    .pipeline-substep svg {
+      width: 16px;
+      height: 16px;
+      color: var(--en);
+      flex-shrink: 0;
+    }
+
+    .pipeline-substep .substep-name {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--ink);
+      font-family: var(--font-display);
+    }
+
+    .pipeline-substep .step-model { margin-left: 0.2rem; }
 
     /* ── FOOTER ── */
     footer {
@@ -450,8 +502,11 @@
       .feature-cell { padding: 1.5rem 0 !important; border-right: none !important; }
       .feature-cell:nth-child(2) { border-top: 1px solid var(--border); }
       .feature-cell:nth-child(4) { border-bottom: none; }
-      .pipeline { flex-direction: column; gap: 0.2rem; }
-      .pipeline-arrow { transform: rotate(90deg); }
+      .pipeline { flex-direction: column; align-items: center; gap: 0.2rem; }
+      .pipeline-arrow { transform: rotate(90deg); margin-top: 0; }
+      .pipeline-fork, .pipeline-merge { transform: rotate(90deg); margin-top: 0; }
+      .pipeline-fork svg, .pipeline-merge svg { width: 32px; height: 72px; }
+      .pipeline-branches { margin-top: 0; flex-direction: row; gap: 0.5rem; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -628,26 +683,43 @@
         <span class="step-name">Translate as you speak</span>
         <span class="step-model">Canary 1B Flash</span>
       </div>
-      <span class="pipeline-arrow">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+      <span class="pipeline-fork">
+        <!-- One line forking into the two voice options -->
+        <svg viewBox="0 0 40 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 48 C 18 48, 18 26, 30 26"/>
+          <path d="m26 21 5 5-5 5"/>
+          <path d="M4 48 C 18 48, 18 70, 30 70"/>
+          <path d="m26 65 5 5-5 5"/>
         </svg>
       </span>
-      <div class="pipeline-step">
-        <span class="step-icon">
-          <!-- Speaker / TTS -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <div class="pipeline-branches">
+        <div class="pipeline-substep">
+          <!-- Person / cloned voice -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="4"/>
+            <path d="M2 21v-1a7 7 0 0 1 14 0v1"/>
+            <path d="M19 8a3 3 0 0 1 0 6"/>
+            <path d="M21 5a7 7 0 0 1 0 12"/>
+          </svg>
+          <span class="substep-name">Your cloned voice</span>
+          <span class="step-model">Pocket TTS</span>
+        </div>
+        <div class="pipeline-substep">
+          <!-- Speaker / generic voice -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
             <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
           </svg>
-        </span>
-        <span class="step-name">Speak</span>
-        <span class="step-model">your cloned voice · Piper</span>
+          <span class="substep-name">Generic voice</span>
+          <span class="step-model">Piper</span>
+        </div>
       </div>
-      <span class="pipeline-arrow">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+      <span class="pipeline-merge">
+        <!-- The two options converging towards the call -->
+        <svg viewBox="0 0 40 96" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 26 C 20 26, 20 48, 32 48"/>
+          <path d="M4 70 C 20 70, 20 48, 32 48"/>
+          <path d="m28 43 5 5-5 5"/>
         </svg>
       </span>
       <div class="pipeline-step">
@@ -668,7 +740,7 @@
 
 <!-- ── FOOTER ── -->
 <footer>
-  <p>made with ♥ speaking Spanish &nbsp;·&nbsp; <a href="https://github.com/NBS282/LiveTranslate">GitHub</a> &nbsp;·&nbsp; MIT License</p>
+  <p><a href="https://github.com/NBS282/LiveTranslate">GitHub</a> &nbsp;·&nbsp; MIT License</p>
 </footer>
 
 </body>
