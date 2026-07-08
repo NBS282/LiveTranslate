@@ -16,11 +16,11 @@ class FakeCanary:
         return [SimpleNamespace(text=self.text)]
 
 
-def test_speech_translate_calls_canary_ast(monkeypatch):
+def test_decode_ast_calls_canary_ast(monkeypatch):
     fake = FakeCanary()
     monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
 
-    out = pipeline.speech_translate("in.wav")
+    out = pipeline._decode_ast("in.wav")
 
     assert out == "Hello world."
     paths, kwargs = fake.calls[0]
@@ -103,7 +103,7 @@ def test_warmup_legacy_engine_loads_parakeet_and_marian(monkeypatch):
     assert "canary" not in calls
 
 
-def test_speech_translate_serializes_concurrent_decodes(monkeypatch):
+def test_decode_ast_serializes_concurrent_decodes(monkeypatch):
     """/translate and /transcribe-partial can call speech_translate from two
     FastAPI threadpool threads at once. NeMo's transcribe() mutates shared
     model state, so overlapping calls must never run concurrently — the
@@ -131,7 +131,7 @@ def test_speech_translate_serializes_concurrent_decodes(monkeypatch):
 
     def call(path):
         try:
-            results[path] = pipeline.speech_translate(path)
+            results[path] = pipeline._decode_ast(path)
         except Exception as e:  # noqa: BLE001 — capture to fail the test explicitly
             errors.append(e)
 
@@ -147,17 +147,94 @@ def test_speech_translate_serializes_concurrent_decodes(monkeypatch):
     assert results["b.wav"] == "result for b.wav"
 
 
-def test_speech_translate_strips_special_tokens(monkeypatch):
+def test_decode_ast_strips_special_tokens(monkeypatch):
     """Near-silent segments make the decoder emit raw special tokens like
     <|endoftext|>) — regression: that garbage was displayed and synthesized."""
     fake = FakeCanary(text=" <|endoftext|>) ")
     monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
 
-    assert pipeline.speech_translate("in.wav") == ""
+    assert pipeline._decode_ast("in.wav") == ""
 
 
-def test_speech_translate_strips_tokens_but_keeps_real_text(monkeypatch):
+def test_decode_ast_strips_tokens_but_keeps_real_text(monkeypatch):
     fake = FakeCanary(text="Hello there.<|endoftext|>")
     monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
 
-    assert pipeline.speech_translate("in.wav") == "Hello there."
+    assert pipeline._decode_ast("in.wav") == "Hello there."
+
+
+def test_speech_translate_normalizes_quiet_audio(tmp_path, monkeypatch):
+    """Mic captures peak ~0.1; Canary collapses on quiet audio. The decode
+    input must be peak-normalized (~0.9)."""
+    import numpy as np
+    import soundfile as sf
+
+    quiet = np.sin(np.linspace(0, 400 * np.pi, 32_000)).astype("float32") * 0.05
+    src = tmp_path / "quiet.wav"
+    sf.write(str(src), quiet, 16_000)
+
+    seen = {}
+
+    def fake_decode(path):
+        audio, _ = sf.read(path, dtype="float32")
+        seen["peak"] = float(abs(audio).max())
+        return "Hello."
+
+    monkeypatch.setattr(pipeline, "_decode_ast", fake_decode)
+
+    assert pipeline.speech_translate(str(src)) == "Hello."
+    assert 0.85 <= seen["peak"] <= 0.95
+
+
+def test_speech_translate_bisects_on_empty_decode(tmp_path, monkeypatch):
+    """A code-switched span can make Canary AST emit nothing for a whole 8s
+    segment. Regression: split in halves and recover what decodes."""
+    import numpy as np
+    import soundfile as sf
+
+    audio = np.sin(np.linspace(0, 4000 * np.pi, 128_000)).astype("float32") * 0.5
+    src = tmp_path / "full.wav"
+    sf.write(str(src), audio, 16_000)
+
+    def fake_decode(path):
+        import soundfile as sf2
+
+        a, sr = sf2.read(path, dtype="float32")
+        dur = len(a) / sr
+        if dur > 6:
+            return ""  # full 8s collapses
+        if dur > 3:
+            return "First half." if fake_decode.calls == 1 else "Second half."
+        return ""
+
+    calls = {"n": 0}
+
+    def counting_decode(path):
+        calls["n"] += 1
+        fake_decode.calls = calls["n"] - 1  # 0 = full, 1 = first half, 2 = second
+        return fake_decode(path)
+
+    monkeypatch.setattr(pipeline, "_decode_ast", counting_decode)
+
+    assert pipeline.speech_translate(str(src)) == "First half. Second half."
+
+
+def test_speech_translate_no_bisect_for_short_clips(tmp_path, monkeypatch):
+    """Breath tails (<4s) that decode empty must NOT trigger extra decodes."""
+    import numpy as np
+    import soundfile as sf
+
+    audio = np.zeros(16_000, dtype="float32")
+    src = tmp_path / "short.wav"
+    sf.write(str(src), audio, 16_000)
+
+    calls = {"n": 0}
+
+    def fake_decode(path):
+        calls["n"] += 1
+        return ""
+
+    monkeypatch.setattr(pipeline, "_decode_ast", fake_decode)
+
+    assert pipeline.speech_translate(str(src)) == ""
+    assert calls["n"] == 1

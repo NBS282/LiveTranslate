@@ -94,7 +94,10 @@ def _get_canary():
         model = EncDecMultiTaskModel.from_pretrained("nvidia/canary-1b-flash")
         model.eval()
         cfg = model.cfg.decoding
-        cfg.beam.beam_size = int(os.environ.get("LT_CANARY_BEAM", "4"))
+        # Greedy by default: beam search collapses to an empty decode on some
+        # real-speech inputs (immediate EOS), and greedy is also ~35% faster.
+        # The quality delta measured on real samples was marginal.
+        cfg.beam.beam_size = int(os.environ.get("LT_CANARY_BEAM", "1"))
         model.change_decoding_strategy(cfg)
         _canary = model
     return _canary
@@ -102,9 +105,13 @@ def _get_canary():
 
 _SPECIAL_TOKEN = re.compile(r"<\|[^|>]*\|>")
 
+# Below this duration an empty decode is almost certainly a breath tail or
+# silence — retrying in halves would only waste CPU on the live path.
+_BISECT_MIN_SECONDS = 4.0
 
-def speech_translate(audio_path: str) -> str:
-    """Translate Spanish speech directly to English text (Canary AST)."""
+
+def _decode_ast(audio_path: str) -> str:
+    """Raw Canary AST decode of one WAV, sanitized. Empty string = no speech."""
     with _decode_lock:
         out = _get_canary().transcribe(
             [audio_path],
@@ -123,6 +130,59 @@ def speech_translate(audio_path: str) -> str:
     if not any(c.isalnum() for c in text):
         return ""
     return text
+
+
+def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
+    """Decode a clip; on empty output, split in halves and recover the parts.
+
+    Canary AST can emit nothing for a whole segment when a short span inside
+    it derails the decoder (observed with English terms embedded in Spanish
+    speech, e.g. "plan-driven"). Bisecting confines the loss to the vicinity
+    of the poison span instead of dropping many seconds of real speech.
+    """
+    import tempfile
+
+    import soundfile as sf
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        path = tmp.name
+    try:
+        sf.write(path, audio, sample_rate)
+        text = _decode_ast(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    duration = len(audio) / sample_rate
+    if text or depth <= 0 or duration < _BISECT_MIN_SECONDS:
+        return text
+
+    mid = len(audio) // 2
+    left = _decode_or_bisect(audio[:mid], sample_rate, depth - 1)
+    right = _decode_or_bisect(audio[mid:], sample_rate, depth - 1)
+    return " ".join(part for part in (left, right) if part)
+
+
+def speech_translate(audio_path: str) -> str:
+    """Translate Spanish speech directly to English text (Canary AST).
+
+    The clip is peak-normalized before decoding: quiet mic captures
+    (peak ~0.1) make Canary collapse to an empty or degenerate decode that
+    the model handles fine at normal levels.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if peak > 1e-4:
+        audio = audio * (0.9 / peak)
+
+    return _decode_or_bisect(audio, sample_rate, depth=1)
 
 
 def transcribe(audio_path: str) -> str:
