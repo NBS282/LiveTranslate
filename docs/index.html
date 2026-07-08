@@ -320,7 +320,8 @@
       align-items: center;
       justify-content: center;
       gap: 0;
-      flex-wrap: wrap;
+      /* Single row on desktop — the mobile media query stacks it vertically. */
+      flex-wrap: nowrap;
     }
 
     .pipeline-step {
@@ -328,8 +329,9 @@
       flex-direction: column;
       align-items: center;
       gap: 0.4rem;
-      padding: 1rem 1.2rem;
+      padding: 1rem 0.9rem;
       text-align: center;
+      white-space: nowrap;
     }
 
     .pipeline-step .step-icon {
@@ -515,8 +517,8 @@
         <p>Built on Tauri, Python, and HuggingFace models. Fork it, extend it, make it yours.</p>
       </div>
       <div class="feature-cell">
-        <h3>Real-time</h3>
-        <p>From your voice to translated audio in ~1–2 seconds. GPU-accelerated when available.</p>
+        <h3>Simultaneous</h3>
+        <p>Subtitles stream while you talk and the translation is voiced sentence by sentence, interpreter-style — no need to stop speaking.</p>
       </div>
       <div class="feature-cell">
         <h3>Works with any app</h3>
@@ -551,21 +553,6 @@
       </span>
       <div class="pipeline-step">
         <span class="step-icon">
-          <!-- Waveform / transcribe -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 12h2"/><path d="M6 8v8"/><path d="M10 5v14"/><path d="M14 9v6"/><path d="M18 7v10"/><path d="M22 12h-2"/>
-          </svg>
-        </span>
-        <span class="step-name">Transcribe</span>
-        <span class="step-model">Parakeet-TDT</span>
-      </div>
-      <span class="pipeline-arrow">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
-        </svg>
-      </span>
-      <div class="pipeline-step">
-        <span class="step-icon">
           <!-- Languages / translate -->
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="m5 8 6 6"/>
@@ -576,8 +563,8 @@
             <path d="M14 18h6"/>
           </svg>
         </span>
-        <span class="step-name">Translate</span>
-        <span class="step-model">Opus-MT</span>
+        <span class="step-name">Translate as you speak</span>
+        <span class="step-model">Canary 1B Flash</span>
       </div>
       <span class="pipeline-arrow">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -594,7 +581,7 @@
           </svg>
         </span>
         <span class="step-name">Speak</span>
-        <span class="step-model">Piper TTS</span>
+        <span class="step-model">your cloned voice · Piper</span>
       </div>
       <span class="pipeline-arrow">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
