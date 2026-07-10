@@ -182,6 +182,27 @@ class TestClonedTTS:
         # Must keep both tones + the gap (~2.5s+), not cut at the 1.5s gap.
         assert len(out) / sr > 2.4
 
+    def test_trim_keeps_quiet_speech_relative_to_clip_level(self):
+        """Regression: Pocket TTS output level varies per generation and is
+        often very quiet. With an absolute -40 dB silence threshold, a phrase
+        whose opening word peaked just above -40 dB but whose remaining words
+        sat below it lost everything after the first word ('Yes, of course.'
+        played as just 'Yes'). The gate must be relative to the clip's own
+        peak, not absolute."""
+        import lt_engine.cloned_tts as ctts
+
+        sr = 24000
+        t = lambda secs: np.arange(int(sr * secs)) / sr  # noqa: E731
+        first_word = (0.02 * np.sin(2 * np.pi * 200 * t(0.3))).astype(np.float32)  # ~-37 dB
+        rest_words = (0.006 * np.sin(2 * np.pi * 200 * t(0.6))).astype(np.float32)  # ~-47 dB
+        tail_silence = np.zeros(int(sr * 0.5), dtype=np.float32)
+        audio = np.concatenate([first_word, rest_words, tail_silence])
+
+        out = ctts._trim_tts_output(audio, sample_rate=sr)
+
+        # The quiet-but-real words must survive: first word + rest + pads.
+        assert len(out) / sr >= 0.9
+
     def test_trim_removes_trailing_silence(self):
         import lt_engine.cloned_tts as ctts
 
