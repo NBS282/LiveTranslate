@@ -1,5 +1,6 @@
 """Persistent FastAPI translation server. Loads models once at startup. Binds 127.0.0.1 only."""
 import os
+import sys
 import threading
 from contextlib import asynccontextmanager
 
@@ -13,18 +14,54 @@ from .pipeline import (
     translate_audio,
     translation_engine,
     warmup,
+    warmup_progress,
 )
 from . import voice_profile as vp
 from .cloned_tts import reset_voice_state, export_voice_state, preprocess_reference_audio
 
+# Warmup readiness, polled by the Rust supervisor via /health. The server
+# binds its port immediately and loads models in a background thread, so the
+# UI can show real progress instead of staring at a dead socket for 30-90s.
+_warmup_state: dict = {"ready": False, "error": None}
+
+
+def _run_warmup_in_background(exit_fn=os._exit) -> None:
+    """Run warmup(), then flip the ready flag.
+
+    A core-model failure records the reason and kills the process: the Rust
+    side watches the child with try_wait() and fails fast on death, whereas a
+    server that stays up but can never become ready would silently burn its
+    whole 10-minute polling timeout. `exit_fn` is injectable for tests.
+    """
+    try:
+        warmup()
+    except Exception as e:  # noqa: BLE001 — terminal boundary, reason kept
+        import traceback
+        traceback.print_exc()
+        _warmup_state["error"] = f"{type(e).__name__}: {e}"
+        sys.stderr.flush()
+        exit_fn(1)
+        return  # reached only when exit_fn is a test fake
+    _warmup_state["ready"] = True
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    warmup()
+    _warmup_state["ready"] = False
+    _warmup_state["error"] = None
+    threading.Thread(target=_run_warmup_in_background, daemon=True).start()
     yield
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+def _require_ready() -> None:
+    if not _warmup_state["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail=f"engine is still loading models ({warmup_progress()}%)",
+        )
 
 
 class TranslateRequest(BaseModel):
@@ -41,11 +78,17 @@ class PartialRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict:
-    return {"ready": True, "cloning_available": cloning_available()}
+    return {
+        "ready": _warmup_state["ready"],
+        "progress": warmup_progress(),
+        "cloning_available": cloning_available(),
+        "error": _warmup_state["error"],
+    }
 
 
 @app.post("/translate")
 def do_translate(req: TranslateRequest) -> dict:
+    _require_ready()
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     try:
@@ -67,6 +110,7 @@ def do_translate(req: TranslateRequest) -> dict:
 @app.post("/transcribe-partial")
 def transcribe_partial(req: PartialRequest) -> dict:
     """Translate an in-progress (open) audio segment. Display-only partials."""
+    _require_ready()
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     if translation_engine() != "canary":
@@ -96,6 +140,7 @@ async def upload_voice_profile(request: Request) -> dict:
     After saving, preprocesses the audio and pre-computes the Pocket TTS
     voice state as .safetensors so the first generation is fast.
     """
+    _require_ready()
     if not cloning_available():
         reason = cloning_error() or "voice cloning engine failed to load"
         raise HTTPException(

@@ -30,6 +30,24 @@ _decode_lock = threading.Lock()
 _cloning_available = False
 _cloning_error: str | None = None
 
+# Warmup progress, polled via /health while models load. Counts completed
+# warmup tasks — with parallel loading there is no single "current step".
+_warmup_progress_lock = threading.Lock()
+_warmup_tasks_done = 0
+_WARMUP_TASKS_TOTAL = 3
+
+
+def warmup_progress() -> int:
+    """Percentage of warmup tasks completed (0-100)."""
+    with _warmup_progress_lock:
+        return int(100 * _warmup_tasks_done / _WARMUP_TASKS_TOTAL)
+
+
+def _mark_warmup_task_done() -> None:
+    global _warmup_tasks_done
+    with _warmup_progress_lock:
+        _warmup_tasks_done += 1
+
 
 def cloning_available() -> bool:
     """True if the Pocket TTS engine loaded successfully during warmup."""
@@ -261,17 +279,24 @@ def warmup() -> None:
     A core-model failure still propagates out of warmup() — the Rust side
     relies on the process dying fast instead of hanging until timeout.
     """
+    global _warmup_tasks_done
     tasks = (_load_core_models, _get_piper, _load_cloning)
+    with _warmup_progress_lock:
+        _warmup_tasks_done = 0
+
+    def run(task) -> None:
+        task()
+        _mark_warmup_task_done()
 
     if os.environ.get("LT_WARMUP_PARALLEL", "1") == "0":
         for task in tasks:
-            task()
+            run(task)
         return
 
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        futures = [pool.submit(task) for task in tasks]
+        futures = [pool.submit(run, task) for task in tasks]
         for future in futures:
             future.result()  # re-raises core/Piper failures
 

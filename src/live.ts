@@ -117,10 +117,16 @@ void listen<{ source_text: string; translated_text: string; error: string | null
   },
 );
 
-// ── Engine warmup listener ────────────────────────────────────────────────────
+// ── Engine warmup listeners ───────────────────────────────────────────────────
+// The engine binds its port immediately and loads models in the background;
+// Rust polls /health and relays real progress so the wait is not a blank stare.
 
 void listen("engine-starting", () => {
   statusEl.textContent = "Loading translation models… (first run can take a few minutes)";
+});
+
+void listen<{ progress: number }>("engine-warmup-progress", (e) => {
+  statusEl.textContent = `Loading translation models… ${e.payload.progress}%`;
 });
 
 // ── PTT state listener ────────────────────────────────────────────────────────
