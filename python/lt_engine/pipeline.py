@@ -127,14 +127,38 @@ _SPECIAL_TOKEN = re.compile(r"<\|[^|>]*\|>")
 # silence — retrying in halves would only waste CPU on the live path.
 _BISECT_MIN_SECONDS = 4.0
 
+# Canary 1B Flash is trained on these directions (EN<->DE/ES/FR). Anything
+# else decodes garbage, so reject it at the boundary instead.
+SUPPORTED_LANGUAGE_PAIRS = frozenset(
+    {("es", "en"), ("en", "es"), ("de", "en"), ("en", "de"), ("fr", "en"), ("en", "fr")}
+)
 
-def _decode_ast(audio_path: str) -> str:
+
+def validate_language_pair(src: str, tgt: str) -> tuple[str, str]:
+    """Normalize and validate a translation pair against Canary's support.
+
+    Returns:
+        The normalized (source, target) tuple.
+
+    Raises:
+        ValueError: if the pair is not one Canary 1B Flash supports.
+    """
+    pair = (src.strip().lower(), tgt.strip().lower())
+    if pair not in SUPPORTED_LANGUAGE_PAIRS:
+        supported = ", ".join(sorted(f"{s}->{t}" for s, t in SUPPORTED_LANGUAGE_PAIRS))
+        raise ValueError(
+            f"unsupported language pair: {src}->{tgt} (supported: {supported})"
+        )
+    return pair
+
+
+def _decode_ast(audio_path: str, source_lang: str = "es", target_lang: str = "en") -> str:
     """Raw Canary AST decode of one WAV, sanitized. Empty string = no speech."""
     with _decode_lock:
         out = _get_canary().transcribe(
             [audio_path],
-            source_lang="es",
-            target_lang="en",
+            source_lang=source_lang,
+            target_lang=target_lang,
             task="ast",
             pnc="yes",
             batch_size=1,
@@ -150,7 +174,9 @@ def _decode_ast(audio_path: str) -> str:
     return text
 
 
-def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
+def _decode_or_bisect(
+    audio, sample_rate: int, depth: int, source_lang: str, target_lang: str
+) -> str:
     """Decode a clip; on empty output, split in halves and recover the parts.
 
     Canary AST can emit nothing for a whole segment when a short span inside
@@ -166,7 +192,7 @@ def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
         path = tmp.name
     try:
         sf.write(path, audio, sample_rate)
-        text = _decode_ast(path)
+        text = _decode_ast(path, source_lang=source_lang, target_lang=target_lang)
     finally:
         try:
             os.unlink(path)
@@ -178,13 +204,18 @@ def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
         return text
 
     mid = len(audio) // 2
-    left = _decode_or_bisect(audio[:mid], sample_rate, depth - 1)
-    right = _decode_or_bisect(audio[mid:], sample_rate, depth - 1)
+    left = _decode_or_bisect(audio[:mid], sample_rate, depth - 1, source_lang, target_lang)
+    right = _decode_or_bisect(audio[mid:], sample_rate, depth - 1, source_lang, target_lang)
     return " ".join(part for part in (left, right) if part)
 
 
-def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
-    """Translate Spanish speech directly to English text (Canary AST).
+def speech_translate(
+    audio_path: str,
+    allow_bisect: bool = True,
+    source_lang: str = "es",
+    target_lang: str = "en",
+) -> str:
+    """Translate speech directly to target-language text (Canary AST).
 
     The clip is peak-normalized before decoding: quiet mic captures
     (peak ~0.1) make Canary collapse to an empty or degenerate decode that
@@ -195,9 +226,16 @@ def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
         allow_bisect: Recover empty decodes of long clips by decoding halves.
             Disable on the partial-decode hot path, where an empty result is
             transient and two extra decodes per tick would starve finals.
+        source_lang: Spoken language (one of Canary's supported pairs).
+        target_lang: Language to translate into.
+
+    Raises:
+        ValueError: if the language pair is not supported by Canary.
     """
     import numpy as np
     import soundfile as sf
+
+    source_lang, target_lang = validate_language_pair(source_lang, target_lang)
 
     audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
     if audio.ndim == 2:
@@ -206,7 +244,13 @@ def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
     if peak > 1e-4:
         audio = audio * (0.9 / peak)
 
-    return _decode_or_bisect(audio, sample_rate, depth=1 if allow_bisect else 0)
+    return _decode_or_bisect(
+        audio,
+        sample_rate,
+        depth=1 if allow_bisect else 0,
+        source_lang=source_lang,
+        target_lang=target_lang,
+    )
 
 
 def transcribe(audio_path: str) -> str:
@@ -313,8 +357,10 @@ def translate_audio(
     Args:
         input_path: Path to the source WAV file.
         out_dir: Directory where output.wav will be written.
-        src: Unused — model is ES->EN only, kept for API compatibility.
-        tgt: Unused — model is ES->EN only, kept for API compatibility.
+        src: Spoken language. Honored by the Canary engine (any supported
+            pair); the legacy Parakeet+Marian path is ES->EN only and
+            ignores it.
+        tgt: Language to translate into. Same engine caveat as `src`.
         use_cloned_voice: If True and a voice profile exists, use Chatterbox
             Turbo instead of Piper for synthesis.
 
@@ -322,15 +368,16 @@ def translate_audio(
         dict with keys: output_wav, source_text, translated_text.
 
     Raises:
-        ValueError: if transcription produces no text.
+        ValueError: if transcription produces no text, or the language pair
+            is unsupported (Canary engine).
     """
     os.makedirs(out_dir, exist_ok=True)
 
     if translation_engine() == "canary":
         # Canary AST: speech -> translated text in one pass. There is no
-        # intermediate Spanish transcript to show.
+        # intermediate source-language transcript to show.
         source_text = ""
-        translated_text = speech_translate(input_path)
+        translated_text = speech_translate(input_path, source_lang=src, target_lang=tgt)
         if not translated_text.strip():
             raise ValueError("transcription produced no text")
     else:

@@ -31,9 +31,72 @@ def test_decode_ast_calls_canary_ast(monkeypatch):
     assert kwargs["pnc"] == "yes"
 
 
+def test_decode_ast_passes_selected_language_pair(monkeypatch):
+    """Canary 1B Flash supports EN<->DE/ES/FR; the pair must reach the model
+    instead of being hardcoded to es->en."""
+    fake = FakeCanary()
+    monkeypatch.setattr(pipeline, "_get_canary", lambda: fake)
+
+    pipeline._decode_ast("in.wav", source_lang="fr", target_lang="en")
+
+    _, kwargs = fake.calls[0]
+    assert kwargs["source_lang"] == "fr"
+    assert kwargs["target_lang"] == "en"
+
+
+def test_speech_translate_forwards_language_pair(tmp_path, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+
+    audio = np.sin(np.linspace(0, 400 * np.pi, 32_000)).astype("float32") * 0.5
+    src = tmp_path / "clip.wav"
+    sf.write(str(src), audio, 16_000)
+
+    seen = {}
+
+    def fake_decode(path, source_lang="es", target_lang="en"):
+        seen["pair"] = (source_lang, target_lang)
+        return "Hallo."
+
+    monkeypatch.setattr(pipeline, "_decode_ast", fake_decode)
+
+    out = pipeline.speech_translate(str(src), source_lang="en", target_lang="de")
+
+    assert out == "Hallo."
+    assert seen["pair"] == ("en", "de")
+
+
+def test_speech_translate_rejects_unsupported_pair(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="unsupported language pair"):
+        pipeline.speech_translate("in.wav", source_lang="es", target_lang="de")
+
+
+def test_validate_language_pair_normalizes_case_and_whitespace():
+    assert pipeline.validate_language_pair(" ES ", "en") == ("es", "en")
+
+
+def test_translate_audio_canary_forwards_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "translation_engine", lambda: "canary")
+    seen = {}
+
+    def fake_speech_translate(path, allow_bisect=True, source_lang="es", target_lang="en"):
+        seen["pair"] = (source_lang, target_lang)
+        return "Bonjour."
+
+    monkeypatch.setattr(pipeline, "speech_translate", fake_speech_translate)
+    monkeypatch.setattr(pipeline, "synthesize", lambda text, out_wav: None)
+
+    result = pipeline.translate_audio("in.wav", str(tmp_path), src="en", tgt="fr")
+
+    assert result["translated_text"] == "Bonjour."
+    assert seen["pair"] == ("en", "fr")
+
+
 def test_translate_audio_routes_to_canary(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "translation_engine", lambda: "canary")
-    monkeypatch.setattr(pipeline, "speech_translate", lambda p: "Hello there.")
+    monkeypatch.setattr(pipeline, "speech_translate", lambda p, **kw: "Hello there.")
     used = {}
     monkeypatch.setattr(
         pipeline, "synthesize", lambda text, out_wav: used.update(text=text)
@@ -50,7 +113,7 @@ def test_translate_audio_canary_empty_raises_no_text(monkeypatch, tmp_path):
     import pytest
 
     monkeypatch.setattr(pipeline, "translation_engine", lambda: "canary")
-    monkeypatch.setattr(pipeline, "speech_translate", lambda p: "   ")
+    monkeypatch.setattr(pipeline, "speech_translate", lambda p, **kw: "   ")
 
     with pytest.raises(ValueError, match="transcription produced no text"):
         pipeline.translate_audio("in.wav", str(tmp_path))
@@ -175,7 +238,7 @@ def test_speech_translate_normalizes_quiet_audio(tmp_path, monkeypatch):
 
     seen = {}
 
-    def fake_decode(path):
+    def fake_decode(path, **kw):
         audio, _ = sf.read(path, dtype="float32")
         seen["peak"] = float(abs(audio).max())
         return "Hello."
@@ -196,7 +259,7 @@ def test_speech_translate_bisects_on_empty_decode(tmp_path, monkeypatch):
     src = tmp_path / "full.wav"
     sf.write(str(src), audio, 16_000)
 
-    def fake_decode(path):
+    def fake_decode(path, **kw):
         import soundfile as sf2
 
         a, sr = sf2.read(path, dtype="float32")
@@ -209,7 +272,7 @@ def test_speech_translate_bisects_on_empty_decode(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def counting_decode(path):
+    def counting_decode(path, **kw):
         calls["n"] += 1
         fake_decode.calls = calls["n"] - 1  # 0 = full, 1 = first half, 2 = second
         return fake_decode(path)
@@ -230,7 +293,7 @@ def test_speech_translate_no_bisect_for_short_clips(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_decode(path):
+    def fake_decode(path, **kw):
         calls["n"] += 1
         return ""
 
@@ -251,7 +314,7 @@ def test_speech_translate_partials_never_bisect(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_decode(path):
+    def fake_decode(path, **kw):
         calls["n"] += 1
         return ""
 

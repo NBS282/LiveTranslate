@@ -257,6 +257,7 @@ fn run_worker(
     stop: Arc<AtomicBool>,
     play_tx: Sender<PathBuf>,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
     pending_finals: Arc<AtomicUsize>,
 ) {
     // Tracks the previous segment's translated text (trimmed, lowercased). Canary
@@ -314,8 +315,11 @@ fn run_worker(
                 }
 
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
-                    let result =
-                        crate::translation::engine_server::translate_ex(&p, use_cloned_voice);
+                    let result = crate::translation::engine_server::translate_ex(
+                        &p,
+                        use_cloned_voice,
+                        &lang,
+                    );
                     // Keep the audio of failed LONG segments for post-mortem: an
                     // "empty transcription" on >=4s of VAD-voiced audio is a decode
                     // bug we can only diagnose by re-running the exact input offline.
@@ -432,6 +436,7 @@ pub fn start(
     output_device_name: &str,
     app: AppHandle,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -483,6 +488,7 @@ pub fn start(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
+        let lang_worker = lang.clone();
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
@@ -490,6 +496,7 @@ pub fn start(
                 stop_clone,
                 play_tx,
                 use_cloned_voice,
+                lang_worker,
                 pending_worker,
             )
         });
@@ -509,6 +516,7 @@ pub fn start(
         let app_partials = app.clone();
         let stop_partials = stop.clone();
         let pending_partials = pending_finals.clone();
+        let lang_partials = lang.clone();
         std::thread::spawn(move || {
             let mut last_len = 0usize;
             while !stop_partials.load(Ordering::Relaxed) {
@@ -548,7 +556,10 @@ pub fn start(
                 }
                 last_len = samples.len();
                 if let Ok(path) = write_segment_wav(&samples) {
-                    let decode = crate::translation::engine_server::transcribe_partial(&path);
+                    let decode = crate::translation::engine_server::transcribe_partial(
+                        &path,
+                        &lang_partials,
+                    );
                     let _ = std::fs::remove_file(&path);
 
                     // Interpreter-style fast close: arm only when the in-progress
@@ -794,6 +805,7 @@ pub fn start_ptt(
     app: AppHandle,
     ptt_recording: Arc<AtomicBool>,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -836,6 +848,7 @@ pub fn start_ptt(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
+        let lang_worker = lang.clone();
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
@@ -843,6 +856,7 @@ pub fn start_ptt(
                 stop_clone,
                 play_tx,
                 use_cloned_voice,
+                lang_worker,
                 pending_worker,
             )
         });

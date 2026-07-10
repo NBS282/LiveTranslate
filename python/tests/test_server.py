@@ -176,6 +176,61 @@ def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
         assert r.json() == {"text": "Partial text"}
 
 
+def test_transcribe_partial_forwards_language_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    seen = {}
+
+    def fake(p, **kw):
+        seen.update(kw)
+        return "Bonjour"
+
+    monkeypatch.setattr(server, "speech_translate", fake)
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/transcribe-partial",
+            json={"input_path": str(f), "src": "en", "tgt": "fr"},
+        )
+        assert r.status_code == 200
+        assert seen["source_lang"] == "en"
+        assert seen["target_lang"] == "fr"
+
+
+def test_transcribe_partial_rejects_unsupported_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/transcribe-partial",
+            json={"input_path": str(f), "src": "es", "tgt": "de"},
+        )
+        assert r.status_code == 400
+        assert "unsupported language pair" in r.json()["detail"]
+
+
+def test_translate_rejects_unsupported_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    f = tmp_path / "in.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/translate",
+            json={
+                "input_path": str(f),
+                "out_dir": str(tmp_path),
+                "src": "fr",
+                "tgt": "de",
+            },
+        )
+        assert r.status_code == 400
+        assert "unsupported language pair" in r.json()["detail"]
+
+
 def test_transcribe_partial_missing_file_400(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
     with TestClient(server.app) as client:

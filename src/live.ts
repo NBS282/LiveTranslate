@@ -5,6 +5,8 @@ import { cloneEnabled } from "./voice";
 
 const inputSelect = document.querySelector<HTMLSelectElement>("#live-device")!;
 const outputSelect = document.querySelector<HTMLSelectElement>("#live-output-device")!;
+const langPairSelect = document.querySelector<HTMLSelectElement>("#live-lang-pair")!;
+const langPill = document.querySelector<HTMLSpanElement>("#lang-pill")!;
 const toggle = document.querySelector<HTMLButtonElement>("#live-toggle")!;
 const statusEl = document.querySelector<HTMLParagraphElement>("#live-status")!;
 const statusDot = document.querySelector<HTMLSpanElement>("#status-dot")!;
@@ -19,6 +21,38 @@ let listening = false;
 let mode: "vad" | "ptt" = "vad";
 let pttShortcut: string | null = null;
 let isCapturingShortcut = false;
+
+// ── Language pair ─────────────────────────────────────────────────────────────
+// Canary 1B Flash supports EN<->DE/ES/FR; the <select> only offers those.
+// The pair is locked while a session runs — it is captured at start time.
+
+function selectedLangPair(): { src: string; tgt: string } {
+  const [src, tgt] = (langPairSelect.value || "es|en").split("|");
+  return { src: src || "es", tgt: tgt || "en" };
+}
+
+function refreshLangPill(): void {
+  const { src, tgt } = selectedLangPair();
+  langPill.replaceChildren(
+    document.createTextNode(`${src.toUpperCase()} `),
+    Object.assign(document.createElement("span"), {
+      className: "arrow",
+      textContent: "→",
+    }),
+    document.createTextNode(` ${tgt.toUpperCase()}`),
+  );
+}
+
+const savedLangPair = localStorage.getItem("lt.langPair");
+if (savedLangPair && [...langPairSelect.options].some((o) => o.value === savedLangPair)) {
+  langPairSelect.value = savedLangPair;
+}
+refreshLangPill();
+
+langPairSelect.addEventListener("change", () => {
+  localStorage.setItem("lt.langPair", langPairSelect.value);
+  refreshLangPill();
+});
 
 // ── Overlay helper ────────────────────────────────────────────────────────────
 
@@ -92,17 +126,18 @@ void listen<{ source_text: string; translated_text: string; error: string | null
       li.textContent = e.payload.error;
       li.classList.add("error");
     } else {
+      const pair = selectedLangPair();
       const tgt = document.createElement("span");
       tgt.style.color = "var(--text)";
-      tgt.textContent = `EN: ${e.payload.translated_text}`;
+      tgt.textContent = `${pair.tgt.toUpperCase()}: ${e.payload.translated_text}`;
 
-      // Canary AST produces no Spanish transcript (source_text === ""). Show
-      // only the translated text instead of an empty "ES: " line with an
+      // Canary AST produces no source-language transcript (source_text === "").
+      // Show only the translated text instead of an empty source line with an
       // arrow pointing at nothing.
       if (e.payload.source_text) {
         const src = document.createElement("span");
         src.style.color = "var(--muted)";
-        src.textContent = `ES: ${e.payload.source_text}`;
+        src.textContent = `${pair.src.toUpperCase()}: ${e.payload.source_text}`;
 
         const arrow = document.createElement("span");
         arrow.style.color = "var(--accent)";
@@ -282,13 +317,19 @@ async function startSession(): Promise<void> {
   try {
     const cmd =
       mode === "ptt" ? "start_live_translation_ptt" : "start_live_translation";
+    const pair = selectedLangPair();
     await invoke(cmd, {
       deviceName: inputSelect.value,
       outputDeviceName: outputSelect.value,
       useClonedVoice: cloneEnabled(),
+      sourceLang: pair.src,
+      targetLang: pair.tgt,
     });
     listening = true;
     setToggle(true);
+    // The pair is captured by the session at start — lock the selector so the
+    // UI can't drift from what the engine is actually doing.
+    langPairSelect.disabled = true;
     if (overlayEnabled()) void (await overlay())?.show();
   } catch (err) {
     statusEl.textContent = `Error: ${err}`;
@@ -303,6 +344,7 @@ async function stopSession(): Promise<void> {
     await invoke("stop_live_translation");
     listening = false;
     setToggle(false);
+    langPairSelect.disabled = false;
     // A stale dimmed partial line must never survive a stop — the Rust worker
     // may have a partial decode in flight when stop lands.
     clearPartial();

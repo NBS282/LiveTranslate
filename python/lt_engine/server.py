@@ -13,6 +13,7 @@ from .pipeline import (
     speech_translate,
     translate_audio,
     translation_engine,
+    validate_language_pair,
     warmup,
     warmup_progress,
 )
@@ -74,6 +75,15 @@ class TranslateRequest(BaseModel):
 
 class PartialRequest(BaseModel):
     input_path: str
+    src: str = "es"
+    tgt: str = "en"
+
+
+def _validate_pair_or_400(src: str, tgt: str) -> None:
+    try:
+        validate_language_pair(src, tgt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/health")
@@ -89,6 +99,7 @@ def health() -> dict:
 @app.post("/translate")
 def do_translate(req: TranslateRequest) -> dict:
     _require_ready()
+    _validate_pair_or_400(req.src, req.tgt)
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     try:
@@ -111,6 +122,7 @@ def do_translate(req: TranslateRequest) -> dict:
 def transcribe_partial(req: PartialRequest) -> dict:
     """Translate an in-progress (open) audio segment. Display-only partials."""
     _require_ready()
+    _validate_pair_or_400(req.src, req.tgt)
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     if translation_engine() != "canary":
@@ -120,7 +132,14 @@ def transcribe_partial(req: PartialRequest) -> dict:
         # "nothing to show" signal the Rust caller swallows.
         return {"text": ""}
     try:
-        return {"text": speech_translate(req.input_path, allow_bisect=False)}
+        return {
+            "text": speech_translate(
+                req.input_path,
+                allow_bisect=False,
+                source_lang=req.src,
+                target_lang=req.tgt,
+            )
+        }
     except Exception as e:
         import traceback
         traceback.print_exc()

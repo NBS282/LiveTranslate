@@ -211,8 +211,12 @@ async fn start_live_translation(
     device_name: String,
     output_device_name: String,
     use_cloned_voice: bool,
+    source_lang: String,
+    target_lang: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // Validate before any capture starts so a bad pair fails instantly.
+    let lang = translation::engine_server::LangPair::parse(&source_lang, &target_lang)?;
     // Run on a blocking thread so the engine readiness wait never freezes the UI.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -222,6 +226,7 @@ async fn start_live_translation(
             &output_device_name,
             app.clone(),
             use_cloned_voice,
+            lang,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
@@ -323,8 +328,11 @@ async fn start_live_translation_ptt(
     device_name: String,
     output_device_name: String,
     use_cloned_voice: bool,
+    source_lang: String,
+    target_lang: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let lang = translation::engine_server::LangPair::parse(&source_lang, &target_lang)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         ensure_server_running(&app, &state)?;
@@ -339,6 +347,7 @@ async fn start_live_translation_ptt(
             app.clone(),
             ptt_rec,
             use_cloned_voice,
+            lang,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
