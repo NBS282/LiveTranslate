@@ -94,8 +94,16 @@ async fn translate_file(
 /// Ensures the translation engine server is running, spawning it if needed.
 /// Returns an immediate error if setup has not been completed yet.
 fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(), String> {
-    if translation::engine_server::is_server_up() {
-        return Ok(());
+    // The server binds its port immediately and warms up in the background,
+    // so an answering /health only means "ready" when it says so.
+    let initial_health = translation::engine_server::health_status();
+    if let Some(ref health) = initial_health {
+        if let Some(ref err) = health.error {
+            return Err(format!("Translation engine failed to load models: {err}"));
+        }
+        if health.ready {
+            return Ok(());
+        }
     }
 
     // If setup is not complete, tell the user right away instead of waiting 2 minutes.
@@ -106,8 +114,8 @@ fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(),
         );
     }
 
-    // Setup is done but the server isn't up — try to spawn (or re-spawn if it crashed).
-    {
+    // Setup is done but nothing answers on the port — spawn (or re-spawn after a crash).
+    if initial_health.is_none() {
         let mut guard = state.server.lock().map_err(|e| e.to_string())?;
         let needs_spawn = match guard.as_mut() {
             None => true,
@@ -130,8 +138,6 @@ fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(),
     // fails fast (instead of waiting the full timeout). NeMo loads a 1.1 GB model
     // into RAM on first start, which can take several minutes on slow disks/CPUs.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{}/health", translation::engine_server::base_url());
     while std::time::Instant::now() < deadline {
         // If the child process has exited, fail immediately.
         if let Ok(mut guard) = state.server.lock() {
@@ -146,8 +152,15 @@ fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(),
             }
         }
 
-        if let Ok(resp) = client.get(&url).timeout(std::time::Duration::from_secs(2)).send() {
-            if resp.status().is_success() {
+        if let Some(health) = translation::engine_server::health_status() {
+            if let Some(err) = health.error {
+                return Err(format!("Translation engine failed to load models: {err}"));
+            }
+            let _ = app.emit(
+                "engine-warmup-progress",
+                serde_json::json!({ "progress": health.progress }),
+            );
+            if health.ready {
                 return Ok(());
             }
         }
@@ -198,8 +211,12 @@ async fn start_live_translation(
     device_name: String,
     output_device_name: String,
     use_cloned_voice: bool,
+    source_lang: String,
+    target_lang: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // Validate before any capture starts so a bad pair fails instantly.
+    let lang = translation::engine_server::LangPair::parse(&source_lang, &target_lang)?;
     // Run on a blocking thread so the engine readiness wait never freezes the UI.
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -209,6 +226,7 @@ async fn start_live_translation(
             &output_device_name,
             app.clone(),
             use_cloned_voice,
+            lang,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
@@ -288,7 +306,10 @@ fn upload_voice_profile(audio_data: Vec<u8>) -> Result<(), String> {
     // The engine may still be warming up (first launch loads ~1.5 GB of models,
     // possibly while they are still downloading). The recording is already
     // captured — wait for readiness instead of discarding it with an error.
-    if !translation::engine_server::is_server_up() {
+    let ready = translation::engine_server::health_status()
+        .map(|h| h.ready)
+        .unwrap_or(false);
+    if !ready {
         translation::engine_server::wait_until_ready(std::time::Duration::from_secs(180))
             .map_err(|_| {
                 "engine is still starting up — try again in a couple of minutes".to_string()
@@ -307,8 +328,11 @@ async fn start_live_translation_ptt(
     device_name: String,
     output_device_name: String,
     use_cloned_voice: bool,
+    source_lang: String,
+    target_lang: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let lang = translation::engine_server::LangPair::parse(&source_lang, &target_lang)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         ensure_server_running(&app, &state)?;
@@ -323,6 +347,7 @@ async fn start_live_translation_ptt(
             app.clone(),
             ptt_rec,
             use_cloned_voice,
+            lang,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())

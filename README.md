@@ -41,14 +41,15 @@ LiveTranslate works like a simultaneous interpreter — you don't have to stop
 speaking for the translation to happen:
 
 1. **Capture** — your microphone audio is captured directly by LiveTranslate.
-2. **Translate as you speak** — [Canary 1B Flash](https://huggingface.co/nvidia/canary-1b-flash) translates speech to English text in a single pass (no separate transcription step). While you talk, in-progress translations stream to the subtitle overlay, and each finished sentence is detected and closed on the fly.
+2. **Translate as you speak** — [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) transcribes your speech and [MarianMT](https://huggingface.co/Helsinki-NLP/opus-mt-es-en) translates it, with a dedicated model per language direction (EN ↔ ES/FR/DE). While you talk, in-progress translations stream to the subtitle overlay, and each finished sentence is detected and closed on the fly.
 3. **Speak** — every closed sentence is voiced immediately — in **your own cloned voice** ([Pocket TTS](https://huggingface.co/kyutai/pocket-tts)) or a standard voice ([Piper TTS](https://github.com/rhasspy/piper)) — and played through a **virtual audio cable**: set that cable as your microphone in the video call app and the other person hears you in English, sentence by sentence, while you keep talking.
 
 ```mermaid
 flowchart LR
-    A["🎙️ Microphone"] --> B["Canary 1B Flash\nSpeech → Translated Text\n(streaming, sentence by sentence)"]
-    B --> D["📺 Live Subtitle Overlay"]
-    B --> E["Your cloned voice / Piper\nText → Speech"]
+    A["🎙️ Microphone"] --> B["Parakeet TDT 0.6B v3\nSpeech → Text\n(streaming, sentence by sentence)"]
+    B --> C["MarianMT\nText → Translated Text\n(per language pair)"]
+    C --> D["📺 Live Subtitle Overlay"]
+    C --> E["Your cloned voice / Piper\nText → Speech"]
     E --> F["🔌 Virtual Cable\n→ Zoom / Teams / Meet"]
 ```
 
@@ -163,7 +164,7 @@ graph TD
     end
 
     subgraph engine["AI Engine — Python + FastAPI"]
-        AST["Speech Translation\nCanary 1B Flash (AST)\nlegacy: Parakeet-TDT + Opus-MT"]
+        AST["Speech Translation\nParakeet-TDT 0.6B v3 + MarianMT\nalternative: Canary 1B Flash (AST)"]
         TTS["Text-to-Speech\nPocket TTS (cloned voice) / Piper"]
     end
 
@@ -186,8 +187,8 @@ graph TD
 | Frontend | Vanilla TypeScript, Vite |
 | Desktop shell | Tauri 2 (Rust) |
 | Audio capture | WASAPI loopback (Windows) |
-| Speech translation | Canary 1B Flash (NVIDIA NeMo, speech→translated text in one pass) |
-| Legacy fallback | Parakeet-TDT + Opus-MT (`LT_TRANSLATION_ENGINE=legacy`) |
+| Speech translation | Parakeet TDT 0.6B v3 (multilingual ASR) + MarianMT (one opus-mt model per direction) |
+| Alternative engine | Canary 1B Flash, speech→translated text in one pass (`LT_TRANSLATION_ENGINE=canary`, model downloads on first use) |
 | Text-to-speech | Pocket TTS (voice cloning) / Piper TTS |
 | Engine server | FastAPI (Python 3.12) |
 
@@ -199,12 +200,12 @@ LiveTranslate is in active development. Current focus areas:
 
 - [x] Windows installer (MSI + NSIS)
 - [x] Spanish → English translation pipeline
-- [x] Simultaneous translation — sentences voiced while you keep speaking (Canary 1B Flash)
+- [x] Simultaneous translation — sentences voiced while you keep speaking (Parakeet + MarianMT)
 - [x] Live streaming subtitles while you talk
 - [x] Transparent subtitle overlay
 - [x] Push-to-talk
-- [ ] Multilingual support (NLLB-200 swap)
-- [ ] Language selection UI
+- [x] Multilingual support — EN ↔ ES/FR/DE language pairs
+- [x] Language selection UI
 - [ ] Linux / macOS support
 - [ ] Built-in model download manager
 - [ ] Live keyboard output — type the translation as if you were physically typing it, so it appears in any text field on screen (chat, forms, live captions)

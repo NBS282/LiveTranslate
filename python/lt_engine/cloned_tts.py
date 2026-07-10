@@ -175,11 +175,18 @@ def _trim_tts_output(
     audio: np.ndarray,
     sample_rate: int = 24000,
     frame_ms: int = 20,
-    silence_threshold_db: float = -40.0,
+    silence_threshold_db: float = -30.0,
     min_silence_ms: int = 200,
     fade_ms: int = 30,
 ) -> np.ndarray:
     """Trim leading and trailing silence from TTS output, then fade out.
+
+    `silence_threshold_db` is RELATIVE to the clip's loudest frame, not an
+    absolute level. Pocket TTS output loudness varies wildly per generation
+    (trimming runs before normalization): with an absolute -40 dB gate, a
+    phrase whose first word peaked above the gate but whose remaining words
+    sat below it lost everything after that word ('Yes, of course.' played
+    as just 'Yes').
 
     NOTE: this deliberately does NOT cut at internal silence gaps. Pocket TTS
     splits long text into per-sentence chunks and concatenates them, so the
@@ -191,7 +198,6 @@ def _trim_tts_output(
         return audio
 
     n_frames = len(audio) // frame_len
-    threshold_linear = 10 ** (silence_threshold_db / 20)
 
     rms = np.array(
         [
@@ -199,6 +205,10 @@ def _trim_tts_output(
             for i in range(n_frames)
         ]
     )
+    peak_rms = float(rms.max())
+    if peak_rms <= 0.0:
+        return audio  # all silence — nothing to trim
+    threshold_linear = peak_rms * 10 ** (silence_threshold_db / 20)
     is_speech = rms >= threshold_linear
 
     if not is_speech.any():

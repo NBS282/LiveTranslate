@@ -76,7 +76,78 @@ pub fn parse_translate_response(body: &str) -> Result<TranslationOutput, String>
     })
 }
 
-/// Returns true if a server is already responding on /health.
+/// Translation directions Canary 1B Flash supports (EN<->DE/ES/FR). Mirrors
+/// SUPPORTED_LANGUAGE_PAIRS in python/lt_engine/pipeline.py — the engine
+/// re-validates, this just fails before any audio is captured.
+pub const SUPPORTED_LANG_PAIRS: [(&str, &str); 6] = [
+    ("es", "en"),
+    ("en", "es"),
+    ("de", "en"),
+    ("en", "de"),
+    ("fr", "en"),
+    ("en", "fr"),
+];
+
+/// A validated translation direction for the live session.
+#[derive(Debug, Clone)]
+pub struct LangPair {
+    pub src: String,
+    pub tgt: String,
+}
+
+impl LangPair {
+    pub fn parse(src: &str, tgt: &str) -> Result<LangPair, String> {
+        let src = src.trim().to_lowercase();
+        let tgt = tgt.trim().to_lowercase();
+        if SUPPORTED_LANG_PAIRS
+            .iter()
+            .any(|(s, t)| *s == src && *t == tgt)
+        {
+            Ok(LangPair { src, tgt })
+        } else {
+            Err(format!("unsupported language pair: {src}->{tgt}"))
+        }
+    }
+}
+
+/// Warmup readiness reported by the engine's /health endpoint. The server
+/// binds its port immediately and loads models in a background thread, so
+/// "the port answers" no longer means "ready" — callers must check `ready`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HealthStatus {
+    #[serde(default)]
+    pub ready: bool,
+    /// Percentage of warmup tasks completed (0-100).
+    #[serde(default)]
+    pub progress: u8,
+    #[serde(default)]
+    pub cloning_available: bool,
+    /// Fatal warmup error, set just before the engine process exits.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+pub fn parse_health_response(body: &str) -> Result<HealthStatus, String> {
+    serde_json::from_str(body).map_err(|e| e.to_string())
+}
+
+/// Current /health status, or None when the server is not answering at all.
+pub fn health_status() -> Option<HealthStatus> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(format!("{}/health", base_url()))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.text().ok()?;
+    parse_health_response(&body).ok()
+}
+
+/// Returns true if a server is already responding on /health (it may still
+/// be warming up — use `health_status()` when readiness matters).
 pub fn is_server_up() -> bool {
     let client = reqwest::blocking::Client::new();
     client
@@ -174,14 +245,15 @@ pub fn spawn_server() -> Result<Child, String> {
     Ok(child)
 }
 
-/// Polls /health until ready or timeout.
+/// Polls /health until the engine reports ready, a fatal warmup error, or timeout.
 pub fn wait_until_ready(timeout: Duration) -> Result<(), String> {
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{}/health", base_url());
     let start = Instant::now();
     while start.elapsed() < timeout {
-        if let Ok(resp) = client.get(&url).timeout(Duration::from_secs(2)).send() {
-            if resp.status().is_success() {
+        if let Some(health) = health_status() {
+            if let Some(err) = health.error {
+                return Err(format!("engine warmup failed: {err}"));
+            }
+            if health.ready {
                 return Ok(());
             }
         }
@@ -239,8 +311,13 @@ pub fn translate(input: &Path) -> Result<TranslationOutput, String> {
     parse_translate_response(&body)
 }
 
-/// Same as `translate` but forwards the `use_cloned_voice` flag to the Python server.
-pub fn translate_ex(input: &Path, use_cloned_voice: bool) -> Result<TranslationOutput, String> {
+/// Same as `translate` but forwards the `use_cloned_voice` flag and the
+/// selected language pair to the Python server.
+pub fn translate_ex(
+    input: &Path,
+    use_cloned_voice: bool,
+    lang: &LangPair,
+) -> Result<TranslationOutput, String> {
     if !input.exists() {
         return Err(format!("input file not found: {}", input.display()));
     }
@@ -273,8 +350,8 @@ pub fn translate_ex(input: &Path, use_cloned_voice: bool) -> Result<TranslationO
         .json(&serde_json::json!({
             "input_path": input.to_string_lossy(),
             "out_dir": out_dir.to_string_lossy(),
-            "src": "es",
-            "tgt": "en",
+            "src": lang.src,
+            "tgt": lang.tgt,
             "use_cloned_voice": use_cloned_voice,
         }))
         .timeout(std::time::Duration::from_secs(120))
@@ -342,11 +419,15 @@ pub fn delete_voice_profile() -> Result<(), String> {
 /// Sends an open (in-progress) segment for partial translation. The 10s
 /// timeout bounds a stalled decode rather than chasing freshness — a partial
 /// that arrives late is simply dropped by the next tick's `last_len` check.
-pub fn transcribe_partial(input: &Path) -> Result<String, String> {
+pub fn transcribe_partial(input: &Path, lang: &LangPair) -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
         .post(format!("{}/transcribe-partial", base_url()))
-        .json(&serde_json::json!({ "input_path": input.to_string_lossy() }))
+        .json(&serde_json::json!({
+            "input_path": input.to_string_lossy(),
+            "src": lang.src,
+            "tgt": lang.tgt,
+        }))
         .timeout(Duration::from_secs(10))
         .send()
         .map_err(|e| format!("partial request failed: {e}"))?;
@@ -389,5 +470,70 @@ mod tests {
     fn parses_partial_response() {
         let v: serde_json::Value = serde_json::from_str(r#"{"text":"Partial"}"#).unwrap();
         assert_eq!(v.get("text").and_then(|x| x.as_str()).unwrap(), "Partial");
+    }
+
+    #[test]
+    fn parses_health_loading_state() {
+        let h = parse_health_response(
+            r#"{"ready":false,"progress":33,"cloning_available":false,"error":null}"#,
+        )
+        .unwrap();
+        assert!(!h.ready);
+        assert_eq!(h.progress, 33);
+        assert!(h.error.is_none());
+    }
+
+    #[test]
+    fn parses_health_ready_state() {
+        let h = parse_health_response(
+            r#"{"ready":true,"progress":100,"cloning_available":true,"error":null}"#,
+        )
+        .unwrap();
+        assert!(h.ready);
+        assert!(h.cloning_available);
+    }
+
+    #[test]
+    fn parses_health_fatal_error() {
+        let h = parse_health_response(
+            r#"{"ready":false,"progress":66,"cloning_available":false,"error":"RuntimeError: boom"}"#,
+        )
+        .unwrap();
+        assert_eq!(h.error.as_deref(), Some("RuntimeError: boom"));
+    }
+
+    #[test]
+    fn parses_legacy_health_body_without_new_fields() {
+        // Old engine versions reply {"ready": true, "cloning_available": bool}.
+        let h = parse_health_response(r#"{"ready":true,"cloning_available":false}"#).unwrap();
+        assert!(h.ready);
+        assert_eq!(h.progress, 0);
+        assert!(h.error.is_none());
+    }
+
+    #[test]
+    fn invalid_health_body_errors() {
+        assert!(parse_health_response("nope").is_err());
+    }
+
+    #[test]
+    fn lang_pair_accepts_supported_directions() {
+        let p = LangPair::parse("es", "en").unwrap();
+        assert_eq!((p.src.as_str(), p.tgt.as_str()), ("es", "en"));
+        assert!(LangPair::parse("en", "fr").is_ok());
+        assert!(LangPair::parse("de", "en").is_ok());
+    }
+
+    #[test]
+    fn lang_pair_normalizes_case_and_whitespace() {
+        let p = LangPair::parse(" ES ", "En").unwrap();
+        assert_eq!((p.src.as_str(), p.tgt.as_str()), ("es", "en"));
+    }
+
+    #[test]
+    fn lang_pair_rejects_unsupported_directions() {
+        assert!(LangPair::parse("es", "de").is_err());
+        assert!(LangPair::parse("pt", "en").is_err());
+        assert!(LangPair::parse("es", "es").is_err());
     }
 }

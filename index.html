@@ -242,7 +242,7 @@
           <div class="app-info">
             <span id="status-dot" class="status-dot"></span>
             <span class="app-name">LiveTranslate</span>
-            <span class="lang-pill">ES <span class="arrow">→</span> EN</span>
+            <span id="lang-pill" class="lang-pill">ES <span class="arrow">→</span> EN</span>
           </div>
           <button id="btn-reopen-onboarding" class="btn-icon" title="Ver la guía de nuevo" aria-label="Ver la guía de nuevo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
@@ -264,6 +264,17 @@
               <label class="field-label" for="live-output-device">Salida (envía a la llamada)</label>
               <select id="live-output-device" class="select"></select>
             </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="live-lang-pair">Idiomas (hablas → se escucha)</label>
+            <select id="live-lang-pair" class="select">
+              <option value="es|en" selected>Español → Inglés</option>
+              <option value="en|es">Inglés → Español</option>
+              <option value="fr|en">Francés → Inglés</option>
+              <option value="en|fr">Inglés → Francés</option>
+              <option value="de|en">Alemán → Inglés</option>
+              <option value="en|de">Inglés → Alemán</option>
+            </select>
           </div>
         </div>
 

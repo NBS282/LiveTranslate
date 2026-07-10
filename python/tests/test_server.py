@@ -1,23 +1,123 @@
+import threading
+import time
+
 from fastapi.testclient import TestClient
 import lt_engine.server as server
+
+
+def _wait_ready(client, timeout: float = 5.0) -> None:
+    """Poll /health until the background warmup thread reports ready."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if client.get("/health").json()["ready"]:
+            return
+        time.sleep(0.01)
+    raise AssertionError("engine never became ready")
 
 
 def test_health_ok(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
     monkeypatch.setattr(server, "cloning_available", lambda: True)
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"ready": True, "cloning_available": True}
+        body = r.json()
+        assert body["ready"] is True
+        assert body["cloning_available"] is True
+        assert body["error"] is None
+        assert isinstance(body["progress"], int)
 
 
 def test_health_reports_cloning_unavailable(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
     monkeypatch.setattr(server, "cloning_available", lambda: False)
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.get("/health")
         assert r.status_code == 200
         assert r.json()["cloning_available"] is False
+
+
+def test_health_reports_loading_while_warmup_running(monkeypatch):
+    """The port must answer immediately with ready=false while models load —
+    the UI polls this to show real warmup progress instead of a dead socket."""
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    try:
+        with TestClient(server.app) as client:
+            r = client.get("/health")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["ready"] is False
+            assert body["error"] is None
+            assert isinstance(body["progress"], int)
+            release.set()
+            _wait_ready(client)
+    finally:
+        release.set()
+
+
+def test_translate_503_while_loading(monkeypatch, tmp_path):
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    f = tmp_path / "in.wav"
+    f.write_bytes(b"x")
+    try:
+        with TestClient(server.app) as client:
+            r = client.post(
+                "/translate", json={"input_path": str(f), "out_dir": str(tmp_path)}
+            )
+            assert r.status_code == 503
+            assert "loading" in r.json()["detail"]
+    finally:
+        release.set()
+
+
+def test_transcribe_partial_503_while_loading(monkeypatch, tmp_path):
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    try:
+        with TestClient(server.app) as client:
+            r = client.post("/transcribe-partial", json={"input_path": str(f)})
+            assert r.status_code == 503
+    finally:
+        release.set()
+
+
+def test_voice_profile_upload_503_while_loading(monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    try:
+        with TestClient(server.app) as client:
+            r = client.post("/voice-profile", content=b"RIFFfakewav")
+            assert r.status_code == 503
+    finally:
+        release.set()
+
+
+def test_warmup_failure_reports_error_and_exits():
+    """A core-model failure must record the reason and kill the process so
+    the Rust supervisor fails fast instead of waiting out its timeout."""
+    exits = []
+
+    def fake_warmup():
+        raise RuntimeError("canary weights corrupt")
+
+    original = server.warmup
+    server.warmup = fake_warmup
+    try:
+        server._warmup_state["ready"] = False
+        server._warmup_state["error"] = None
+        server._run_warmup_in_background(exit_fn=exits.append)
+    finally:
+        server.warmup = original
+
+    assert exits == [1]
+    assert "canary weights corrupt" in server._warmup_state["error"]
+    assert server._warmup_state["ready"] is False
 
 
 def test_voice_profile_upload_503_when_cloning_unavailable(monkeypatch):
@@ -25,6 +125,7 @@ def test_voice_profile_upload_503_when_cloning_unavailable(monkeypatch):
     monkeypatch.setattr(server, "cloning_available", lambda: False)
     monkeypatch.setattr(server, "cloning_error", lambda: "401 gated repo")
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post("/voice-profile", content=b"RIFFfakewav")
         assert r.status_code == 503
         assert "401 gated repo" in r.json()["detail"]
@@ -44,6 +145,7 @@ def test_translate_calls_engine(monkeypatch, tmp_path):
     f = tmp_path / "in.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post(
             "/translate",
             json={"input_path": str(f), "out_dir": str(tmp_path), "use_cloned_voice": True},
@@ -57,49 +159,120 @@ def test_translate_calls_engine(monkeypatch, tmp_path):
 def test_translate_missing_file_400(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post("/translate", json={"input_path": "/no/such.wav", "out_dir": "."})
         assert r.status_code == 400
 
 
 def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
     monkeypatch.setattr(server, "speech_translate", lambda p, **kw: "Partial text")
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post("/transcribe-partial", json={"input_path": str(f)})
         assert r.status_code == 200
         assert r.json() == {"text": "Partial text"}
 
 
+def test_transcribe_partial_forwards_language_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
+    seen = {}
+
+    def fake(p, **kw):
+        seen.update(kw)
+        return "Bonjour"
+
+    monkeypatch.setattr(server, "speech_translate", fake)
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/transcribe-partial",
+            json={"input_path": str(f), "src": "en", "tgt": "fr"},
+        )
+        assert r.status_code == 200
+        assert seen["source_lang"] == "en"
+        assert seen["target_lang"] == "fr"
+
+
+def test_transcribe_partial_rejects_unsupported_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    f = tmp_path / "chunk.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/transcribe-partial",
+            json={"input_path": str(f), "src": "es", "tgt": "de"},
+        )
+        assert r.status_code == 400
+        assert "unsupported language pair" in r.json()["detail"]
+
+
+def test_translate_rejects_unsupported_pair(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    f = tmp_path / "in.wav"
+    f.write_bytes(b"x")
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/translate",
+            json={
+                "input_path": str(f),
+                "out_dir": str(tmp_path),
+                "src": "fr",
+                "tgt": "de",
+            },
+        )
+        assert r.status_code == 400
+        assert "unsupported language pair" in r.json()["detail"]
+
+
 def test_transcribe_partial_missing_file_400(monkeypatch):
     monkeypatch.setattr(server, "warmup", lambda: None)
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post("/transcribe-partial", json={"input_path": "/no/such.wav"})
         assert r.status_code == 400
 
 
-def test_transcribe_partial_returns_empty_under_legacy_engine(monkeypatch, tmp_path):
-    """Under LT_TRANSLATION_ENGINE=legacy, /transcribe-partial must not lazy-load
-    the 3.5GB Canary model — that would break the rollback guarantee. It must
-    short-circuit to the empty-text signal without calling speech_translate."""
+def test_transcribe_partial_cascade_uses_parakeet_marian(monkeypatch, tmp_path):
+    """Under the default cascade engine, partials run Parakeet -> Marian and
+    must never touch Canary (the 3.5GB model must not lazy-load)."""
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "legacy")
+    monkeypatch.setattr(server, "translation_engine", lambda: "cascade")
 
-    def must_not_be_called(path):
-        raise AssertionError("must not be called")
+    def must_not_be_called(path, **kw):
+        raise AssertionError("Canary path must not be used under cascade")
 
     monkeypatch.setattr(server, "speech_translate", must_not_be_called)
+    seen = {}
+
+    def fake_cascade(path, src, tgt):
+        seen["args"] = (src, tgt)
+        return "Partial text"
+
+    monkeypatch.setattr(server, "transcribe_translate", fake_cascade)
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
-        r = client.post("/transcribe-partial", json={"input_path": str(f)})
+        _wait_ready(client)
+        r = client.post(
+            "/transcribe-partial", json={"input_path": str(f), "src": "en", "tgt": "fr"}
+        )
         assert r.status_code == 200
-        assert r.json() == {"text": ""}
+        assert r.json() == {"text": "Partial text"}
+        assert seen["args"] == ("en", "fr")
 
 
 def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
 
     def boom(path, **kw):
         raise RuntimeError("decoder exploded")
@@ -108,6 +281,7 @@ def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
+        _wait_ready(client)
         r = client.post("/transcribe-partial", json={"input_path": str(f)})
         assert r.status_code == 500
         assert "decoder exploded" in r.json()["detail"]

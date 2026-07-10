@@ -105,32 +105,120 @@ fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {
 
 // ── File download ─────────────────────────────────────────────────────────────
 
+const DOWNLOAD_MAX_ATTEMPTS: u32 = 4;
+
+/// Delay before retry number `retry` (1-based): 2s, 4s, 8s.
+fn backoff_delay(retry: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(1u64 << retry)
+}
+
+/// In-progress downloads write to `<dest>.part` and are renamed on completion,
+/// so `dest` never holds a truncated file.
+fn part_path(dest: &std::path::Path) -> PathBuf {
+    let mut name = dest.as_os_str().to_owned();
+    name.push(".part");
+    PathBuf::from(name)
+}
+
+/// A local file needs (re-)downloading when it is missing, or when the remote
+/// size is known and differs from the local one. When the remote size cannot
+/// be determined the local file is trusted.
+fn needs_download(local_size: Option<u64>, remote_size: Option<u64>) -> bool {
+    match (local_size, remote_size) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(local), Some(remote)) => local != remote,
+    }
+}
+
+fn http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// Size the server reports for `url`, via a HEAD request. Best-effort.
+fn remote_content_length(url: &str) -> Option<u64> {
+    let client = http_client().ok()?;
+    let resp = client.head(url).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.content_length().filter(|n| *n > 0)
+}
+
 fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Result<(), String> {
-    use std::io::Write;
+    let part = part_path(dest);
+    let mut last_err = String::new();
+
+    for attempt in 1..=DOWNLOAD_MAX_ATTEMPTS {
+        if attempt > 1 {
+            emit_progress(
+                app,
+                step,
+                0,
+                &format!("Retrying download (attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS})…"),
+            );
+            std::thread::sleep(backoff_delay(attempt - 1));
+        }
+        match download_attempt(app, url, dest, &part, step) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+fn download_attempt(
+    app: &AppHandle,
+    url: &str,
+    dest: &PathBuf,
+    part: &PathBuf,
+    step: &str,
+) -> Result<(), String> {
+    use std::io::{Read, Write};
 
     emit_progress(app, step, 0, &format!("Downloading {url}"));
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = http_client()?;
 
-    let mut resp = client
-        .get(url)
-        .send()
-        .map_err(|e| format!("download failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("download returned HTTP {}", resp.status()));
+    // Resume from an interrupted attempt when a partial file is present.
+    let offset = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(url);
+    if offset > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }
 
-    let total = resp.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-    let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 65536];
+    let mut resp = req.send().map_err(|e| format!("download failed: {e}"))?;
+    let status = resp.status();
 
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // The partial file is stale or already past the remote size; discard it
+        // and let the next attempt start from scratch.
+        let _ = std::fs::remove_file(part);
+        return Err("server rejected resume range; restarting download".to_string());
+    }
+
+    let resumed = offset > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+    if !resumed && !status.is_success() {
+        return Err(format!("download returned HTTP {status}"));
+    }
+
+    let (mut file, mut downloaded, total) = if resumed {
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| e.to_string())?;
+        (file, offset, offset + resp.content_length().unwrap_or(0))
+    } else {
+        // Fresh download, or the server ignored the Range header: truncate.
+        let file = std::fs::File::create(part).map_err(|e| e.to_string())?;
+        (file, 0u64, resp.content_length().unwrap_or(0))
+    };
+
+    let mut buf = [0u8; 65536];
     loop {
-        use std::io::Read;
         let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
             break;
@@ -138,7 +226,7 @@ fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Resu
         file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         downloaded += n as u64;
         if total > 0 {
-            let pct = ((downloaded * 100) / total) as u8;
+            let pct = ((downloaded * 100) / total).min(100) as u8;
             emit_progress(
                 app,
                 step,
@@ -147,7 +235,9 @@ fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Resu
             );
         }
     }
+    drop(file);
 
+    std::fs::rename(part, dest).map_err(|e| format!("failed to finalize download: {e}"))?;
     Ok(())
 }
 
@@ -286,21 +376,27 @@ pub fn download_piper_voice(app: &AppHandle) -> Result<(), String> {
     let onnx = piper_voice_path();
     let json = onnx.with_extension("onnx.json");
 
-    if !onnx.exists() {
-        download_file(
-            app,
-            &format!("{base}/en_US-lessac-medium.onnx"),
-            &onnx,
+    let targets = [
+        (
+            format!("{base}/en_US-lessac-medium.onnx"),
+            onnx,
             "Downloading Piper voice model",
-        )?;
-    }
-    if !json.exists() {
-        download_file(
-            app,
-            &format!("{base}/en_US-lessac-medium.onnx.json"),
-            &json,
+        ),
+        (
+            format!("{base}/en_US-lessac-medium.onnx.json"),
+            json,
             "Downloading Piper voice config",
-        )?;
+        ),
+    ];
+
+    for (url, path, step) in targets {
+        let local = std::fs::metadata(&path).ok().map(|m| m.len());
+        // Compare against the size the server reports so a previously truncated
+        // download gets repaired instead of being trusted forever.
+        let remote = remote_content_length(&url);
+        if needs_download(local, remote) {
+            download_file(app, &url, &path, step)?;
+        }
     }
     Ok(())
 }
@@ -477,127 +573,13 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
-    // ── Step 5: pre-cache ML models (MarianMT + Parakeet ASR + Canary AST + Pocket TTS) ───
-    // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
-    // app data and are never re-downloaded on subsequent launches.
-    let hf_cache = crate::translation::sidecar::repo_root()
-        .join("models")
-        .join("hf");
-    let _ = std::fs::create_dir_all(&hf_cache);
-    let hf_cache_str = hf_cache.to_string_lossy().into_owned();
-
-    emit_progress(
-        app,
-        "Downloading translation models",
-        91,
-        "~5.6 GB — first-time download, please wait…",
-    );
-    let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
-    // Create nemo sub-dir before the script runs so it doesn't hit a permissions
-    // error the first time it tries to write there.
-    let _ = std::fs::create_dir_all(hf_cache.join("nemo"));
-
-    run_python_script(
-        app,
-        &python,
-        r#"
-import sys, os
-
-nemo_dir = os.environ.get("NEMO_CACHE_DIR", "")
-if nemo_dir:
-    os.makedirs(nemo_dir, exist_ok=True)
-
-print("(1/4) Downloading MarianMT ES->EN (~300 MB)...", flush=True)
-try:
-    from transformers import MarianMTModel, MarianTokenizer
-    MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-es-en")
-    MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-es-en")
-    print("MarianMT ready.", flush=True)
-except Exception as e:
-    print(f"ERROR [MarianMT]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    sys.exit(1)
-
-print("(2/4) Downloading Parakeet ASR model (~1.1 GB)...", flush=True)
-try:
-    # On Windows without Developer Mode, os.symlink raises WinError 1314.
-    # huggingface_hub's fallback copies files using the relative symlink src
-    # resolved from CWD instead of from the symlink's parent — patch it so
-    # the copy always uses the correct absolute path.
-    import os as _os, shutil as _shutil
-    if _os.name == "nt":
-        try:
-            import huggingface_hub.file_download as _hfd
-            _orig_symlink = _hfd._create_symlink
-            def _safe_symlink(src, dst, new_blob=False):
-                try:
-                    _os.symlink(src, dst)
-                except OSError:
-                    abs_src = src if _os.path.isabs(src) else _os.path.normpath(
-                        _os.path.join(_os.path.dirname(dst), src)
-                    )
-                    if not _os.path.exists(dst):
-                        if new_blob:
-                            _shutil.move(abs_src, dst)
-                        else:
-                            _shutil.copy2(abs_src, dst)
-            _hfd._create_symlink = _safe_symlink
-        except Exception:
-            pass  # patch failed — rely on the version pin to have the fix
-
-    from huggingface_hub import snapshot_download
-    snapshot_download("nvidia/parakeet-tdt-0.6b-v3")
-    print("Parakeet model files cached.", flush=True)
-except Exception as e:
-    print(f"ERROR [Parakeet]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    sys.exit(1)
-
-print("(3/4) Downloading Canary 1B Flash speech translation (~3.5 GB)...", flush=True)
-try:
-    from huggingface_hub import snapshot_download
-    snapshot_download("nvidia/canary-1b-flash")
-    print("Canary model files cached.", flush=True)
-except Exception as e:
-    print(f"ERROR [Canary]: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    sys.exit(1)
-
-# Voice cloning (Pocket TTS) is OPTIONAL — never abort setup if it is
-# missing or fails to download. Loading the model here pre-fetches exactly
-# the files the runtime server will use, so the first cloned synthesis has
-# no download cost.
-print("(4/4) Downloading Pocket TTS model (optional, ~200 MB)...", flush=True)
-try:
-    from pocket_tts import TTSModel
-    TTSModel.load_model()
-    print("Pocket TTS model cached.", flush=True)
-except Exception as e:
-    # Best-effort: log and continue. The app falls back to the standard voice.
-    print(f"WARN [Pocket TTS optional]: {type(e).__name__}: {e}", flush=True)
-"#,
-        91,
-        &{
-            let mut env_pairs = vec![
-                ("HF_HOME", hf_cache_str.as_str()),
-                ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
-                ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
-                ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
-            ];
-            // Only pass HF_TOKEN when a non-empty one was baked in at build
-            // time. The Hub rejects EVERY download (including public repos)
-            // with 401 when the token is empty, expired, or revoked.
-            if let Some(token) = option_env!("HF_TOKEN").filter(|t| !t.is_empty()) {
-                env_pairs.push(("HF_TOKEN", token));
-            }
-            env_pairs
-        },
-    )?;
-
-    // ── Step 6: ensure lt_engine source is available ──────────────────────────
+    // ── Step 5: ensure lt_engine source is available ──────────────────────────
     // In production, lib.rs copies the bundled python/ from resources to data_dir on
-    // every launch, but that copy can fail silently. We verify here so the server can
-    // always find the lt_engine package (via PYTHONPATH) after setup finishes.
+    // every launch, but that copy can fail silently. We verify here — and BEFORE the
+    // model download, which runs `-m lt_engine.setup_models` and needs the package.
     let python_src = crate::translation::sidecar::python_dir();
     if !python_src.exists() {
-        emit_progress(app, "Copying engine source", 97, "");
+        emit_progress(app, "Copying engine source", 90, "");
         match app.path().resource_dir() {
             Ok(res_dir) => {
                 let bundled = res_dir.join("python");
@@ -614,6 +596,46 @@ except Exception as e:
             }
         }
     }
+
+    // ── Step 6: pre-cache ML models (MarianMT + Parakeet ASR + Canary AST + Pocket TTS) ───
+    // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
+    // app data and are never re-downloaded on subsequent launches. The
+    // orchestration lives in python/lt_engine/setup_models.py (testable with
+    // pytest); it downloads two models at a time and reports PROGRESS:<pct>.
+    let hf_cache = crate::translation::sidecar::repo_root()
+        .join("models")
+        .join("hf");
+    let _ = std::fs::create_dir_all(&hf_cache);
+    let hf_cache_str = hf_cache.to_string_lossy().into_owned();
+
+    emit_progress(
+        app,
+        "Downloading translation models",
+        91,
+        "~3.5 GB — first-time download, please wait…",
+    );
+    let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
+    // Create nemo sub-dir before the script runs so it doesn't hit a permissions
+    // error the first time it tries to write there.
+    let _ = std::fs::create_dir_all(hf_cache.join("nemo"));
+    let python_src_str = python_src.to_string_lossy().into_owned();
+
+    run_python_module(app, &python, "lt_engine.setup_models", 91, 97, &{
+        let mut env_pairs = vec![
+            ("PYTHONPATH", python_src_str.as_str()),
+            ("HF_HOME", hf_cache_str.as_str()),
+            ("TRANSFORMERS_CACHE", hf_cache_str.as_str()),
+            ("NEMO_CACHE_DIR", nemo_cache_str.as_str()),
+            ("HF_HUB_DISABLE_SYMLINKS_WARNING", "1"),
+        ];
+        // Only pass HF_TOKEN when a non-empty one was baked in at build
+        // time. The Hub rejects EVERY download (including public repos)
+        // with 401 when the token is empty, expired, or revoked.
+        if let Some(token) = option_env!("HF_TOKEN").filter(|t| !t.is_empty()) {
+            env_pairs.push(("HF_TOKEN", token));
+        }
+        env_pairs
+    })?;
 
     emit_progress(app, "Setup complete", 100, "");
     Ok(())
@@ -687,13 +709,21 @@ fn run_pip(
     Ok(())
 }
 
-// ── Python script runner ──────────────────────────────────────────────────────
+// ── Python module runner ──────────────────────────────────────────────────────
 
-fn run_python_script(
+/// Maps a subprocess-reported percentage (0-100) into the [pct_start, pct_end]
+/// slice this step occupies on the overall setup progress bar.
+fn scale_progress(pct_start: u8, pct_end: u8, inner: u8) -> u8 {
+    let span = pct_end.saturating_sub(pct_start) as u32;
+    pct_start + ((inner.min(100) as u32 * span) / 100) as u8
+}
+
+fn run_python_module(
     app: &AppHandle,
     python: &PathBuf,
-    code: &str,
+    module: &str,
     pct_start: u8,
+    pct_end: u8,
     extra_env: &[(&str, &str)],
 ) -> Result<(), String> {
     use std::io::BufRead;
@@ -702,7 +732,7 @@ fn run_python_script(
 
     let mut cmd = std::process::Command::new(python);
     // -u: unbuffered so progress lines arrive in real-time on Windows.
-    cmd.args(["-u", "-c", code])
+    cmd.args(["-u", "-m", module])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // Prevent codec crashes on Windows when NeMo/HF print non-ASCII chars.
@@ -747,6 +777,15 @@ fn run_python_script(
                 .lines()
                 .map_while(Result::ok)
             {
+                // PROGRESS:<pct> lines are the module's overall progress
+                // (cache-size based); everything else is log detail.
+                if let Some(rest) = line.strip_prefix("PROGRESS:") {
+                    if let Ok(inner) = rest.trim().parse::<u8>() {
+                        let pct = scale_progress(pct_start, pct_end, inner);
+                        emit_progress(&app2, "Downloading models", pct, "");
+                        continue;
+                    }
+                }
                 emit_progress(&app2, "Downloading models", pct_start, &line);
             }
         }))
@@ -778,4 +817,58 @@ fn run_python_script(
         });
     }
     Ok(())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn needs_download_when_local_missing() {
+        assert!(needs_download(None, Some(10)));
+        assert!(needs_download(None, None));
+    }
+
+    #[test]
+    fn trusts_local_file_when_remote_size_unknown() {
+        assert!(!needs_download(Some(10), None));
+    }
+
+    #[test]
+    fn redownloads_on_size_mismatch() {
+        assert!(needs_download(Some(10), Some(20)));
+    }
+
+    #[test]
+    fn skips_download_when_sizes_match() {
+        assert!(!needs_download(Some(10), Some(10)));
+    }
+
+    #[test]
+    fn backoff_doubles_per_retry() {
+        assert_eq!(backoff_delay(1).as_secs(), 2);
+        assert_eq!(backoff_delay(2).as_secs(), 4);
+        assert_eq!(backoff_delay(3).as_secs(), 8);
+    }
+
+    #[test]
+    fn part_path_appends_suffix_without_touching_extension() {
+        let p = part_path(std::path::Path::new("C:/models/voice.onnx"));
+        assert!(p.to_string_lossy().ends_with("voice.onnx.part"));
+        let q = part_path(std::path::Path::new("C:/models/voice.onnx.json"));
+        assert!(q.to_string_lossy().ends_with("voice.onnx.json.part"));
+    }
+
+    #[test]
+    fn scale_progress_maps_into_step_slice() {
+        assert_eq!(scale_progress(91, 97, 0), 91);
+        assert_eq!(scale_progress(91, 97, 50), 94);
+        assert_eq!(scale_progress(91, 97, 100), 97);
+        // Values above 100 from a buggy reporter are clamped, not overflowed.
+        assert_eq!(scale_progress(91, 97, 255), 97);
+        // Inverted ranges degrade to the start instead of panicking.
+        assert_eq!(scale_progress(97, 91, 50), 97);
+    }
 }

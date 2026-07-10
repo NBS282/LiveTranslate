@@ -257,6 +257,7 @@ fn run_worker(
     stop: Arc<AtomicBool>,
     play_tx: Sender<PathBuf>,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
     pending_finals: Arc<AtomicUsize>,
 ) {
     // Tracks the previous segment's translated text (trimmed, lowercased). Canary
@@ -314,8 +315,11 @@ fn run_worker(
                 }
 
                 let translate_result = write_segment_wav(&samples).and_then(|p| {
-                    let result =
-                        crate::translation::engine_server::translate_ex(&p, use_cloned_voice);
+                    let result = crate::translation::engine_server::translate_ex(
+                        &p,
+                        use_cloned_voice,
+                        &lang,
+                    );
                     // Keep the audio of failed LONG segments for post-mortem: an
                     // "empty transcription" on >=4s of VAD-voiced audio is a decode
                     // bug we can only diagnose by re-running the exact input offline.
@@ -432,6 +436,7 @@ pub fn start(
     output_device_name: &str,
     app: AppHandle,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -483,6 +488,7 @@ pub fn start(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
+        let lang_worker = lang.clone();
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
@@ -490,6 +496,7 @@ pub fn start(
                 stop_clone,
                 play_tx,
                 use_cloned_voice,
+                lang_worker,
                 pending_worker,
             )
         });
@@ -509,6 +516,7 @@ pub fn start(
         let app_partials = app.clone();
         let stop_partials = stop.clone();
         let pending_partials = pending_finals.clone();
+        let lang_partials = lang.clone();
         std::thread::spawn(move || {
             let mut last_len = 0usize;
             while !stop_partials.load(Ordering::Relaxed) {
@@ -548,7 +556,10 @@ pub fn start(
                 }
                 last_len = samples.len();
                 if let Ok(path) = write_segment_wav(&samples) {
-                    let decode = crate::translation::engine_server::transcribe_partial(&path);
+                    let decode = crate::translation::engine_server::transcribe_partial(
+                        &path,
+                        &lang_partials,
+                    );
                     let _ = std::fs::remove_file(&path);
 
                     // Interpreter-style fast close: arm only when the in-progress
@@ -753,7 +764,16 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
     };
 
     // --- Channel conversion ---
-    let final_samples = convert_channels(&resampled, wav_channels, native_channels);
+    let mut final_samples = convert_channels(&resampled, wav_channels, native_channels);
+
+    // Append a silent tail so the LAST thing fed to the device is silence,
+    // not speech. The drain flag below flips when the callback consumes the
+    // final sample of THIS vector — any output latency past our drain pad
+    // (device buffers, VB-Cable's internal ring) then swallows silence
+    // instead of clipping the end of the phrase.
+    let tail = tail_silence_samples(native_rate, native_channels, PLAYBACK_TAIL_SILENCE_MS);
+    final_samples.extend(std::iter::repeat(0.0f32).take(tail));
+
     let duration_secs = final_samples.len() as f32 / native_rate as f32 / native_channels as f32;
 
     // --- Build and play stream ---
@@ -766,13 +786,33 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
         buffer_size: cpal::BufferSize::Default,
     };
 
+    // Dropping the stream stops output instantly, so we must not leave this
+    // function until the device has actually rendered every sample. A fixed
+    // sleep measured from play() undershoots: WASAPI stream startup (device
+    // init + buffer priming) delays the first audible sample by 50-300 ms,
+    // which used to cut the tail of every phrase — badly so on short clips.
+    // Instead the callback flags when it has consumed the final sample, and
+    // we wait for that condition plus a drain pad for the last buffer.
+    let drained = Arc::new(AtomicBool::new(false));
+    let drained_cb = drained.clone();
+
     let stream = device
         .build_output_stream(
             &stream_cfg,
             move |data: &mut [f32], _| {
                 let mut iter = samples_cb.lock().unwrap();
+                let mut exhausted = false;
                 for d in data.iter_mut() {
-                    *d = iter.next().unwrap_or(0.0);
+                    match iter.next() {
+                        Some(s) => *d = s,
+                        None => {
+                            *d = 0.0;
+                            exhausted = true;
+                        }
+                    }
+                }
+                if exhausted {
+                    drained_cb.store(true, Ordering::Relaxed);
                 }
             },
             |e| eprintln!("playback stream error: {e}"),
@@ -781,9 +821,53 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
         .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_secs_f32(duration_secs + 0.1));
+
+    // Generous timeout: covers duration + any plausible startup latency, and
+    // guarantees we never hang if the device dies mid-playback.
+    let started = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs_f32(duration_secs + 2.0);
+    if !wait_until_true(&drained, timeout) {
+        eprintln!("playback: drain flag never set, timed out after {timeout:?}");
+    }
+    // Diagnostic: how far the callback-side drain ran ahead of real time. A
+    // large gap means the device buffers deep and the tail relies on the
+    // silence pad above — data we need if clipping is ever reported again.
+    eprintln!(
+        "live: playback drained in {:.2}s (audio+tail {:.2}s)",
+        started.elapsed().as_secs_f32(),
+        duration_secs,
+    );
+    // The flag flips when the callback FILLS the last buffer; the device still
+    // has up to that buffer plus its output latency left to render.
+    std::thread::sleep(std::time::Duration::from_millis(PLAYBACK_DRAIN_PAD_MS));
 
     Ok(())
+}
+
+/// Milliseconds to keep the output stream alive after the callback consumed
+/// the last sample: one hardware buffer + typical WASAPI output latency.
+const PLAYBACK_DRAIN_PAD_MS: u64 = 250;
+
+/// Milliseconds of silence appended after the phrase so residual device
+/// latency (WASAPI buffers, VB-Cable's ring) clips silence, never speech.
+const PLAYBACK_TAIL_SILENCE_MS: usize = 300;
+
+/// Interleaved sample count for `ms` of silence at the given rate/channels.
+fn tail_silence_samples(rate: usize, channels: usize, ms: usize) -> usize {
+    rate * channels * ms / 1000
+}
+
+/// Polls `flag` every 10 ms until it is true (returns true) or `timeout`
+/// elapses (returns false).
+fn wait_until_true(flag: &AtomicBool, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if flag.load(Ordering::Relaxed) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    flag.load(Ordering::Relaxed)
 }
 
 /// Starts PTT capture: same thread layout as `start()` but uses `run_producer_ptt`
@@ -794,6 +878,7 @@ pub fn start_ptt(
     app: AppHandle,
     ptt_recording: Arc<AtomicBool>,
     use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -836,6 +921,7 @@ pub fn start_ptt(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
+        let lang_worker = lang.clone();
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
@@ -843,6 +929,7 @@ pub fn start_ptt(
                 stop_clone,
                 play_tx,
                 use_cloned_voice,
+                lang_worker,
                 pending_worker,
             )
         });
@@ -1032,6 +1119,39 @@ mod tests {
         let mono = vec![0.5f32, -0.3, 0.1];
         let stereo = convert_channels(&mono, 1, 2);
         assert_eq!(stereo, vec![0.5, 0.5, -0.3, -0.3, 0.1, 0.1]);
+    }
+
+    #[test]
+    fn tail_silence_matches_rate_and_channels() {
+        // 300 ms at 48 kHz stereo = 48000 * 2 * 0.3 interleaved samples.
+        assert_eq!(tail_silence_samples(48_000, 2, 300), 28_800);
+        assert_eq!(tail_silence_samples(16_000, 1, 300), 4_800);
+        assert_eq!(tail_silence_samples(44_100, 2, 0), 0);
+    }
+
+    #[test]
+    fn wait_until_returns_true_when_flag_set() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_setter = flag.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            flag_setter.store(true, Ordering::Relaxed);
+        });
+
+        let ok = wait_until_true(&flag, std::time::Duration::from_secs(2));
+
+        assert!(ok);
+    }
+
+    #[test]
+    fn wait_until_times_out_when_flag_never_set() {
+        let flag = Arc::new(AtomicBool::new(false));
+
+        let start = std::time::Instant::now();
+        let ok = wait_until_true(&flag, std::time::Duration::from_millis(50));
+
+        assert!(!ok);
+        assert!(start.elapsed() >= std::time::Duration::from_millis(50));
     }
 
     #[test]

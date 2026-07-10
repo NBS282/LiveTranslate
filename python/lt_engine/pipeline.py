@@ -3,9 +3,15 @@
 Models are loaded lazily on first use and kept in module-level singletons
 so the server process pays the load cost only once.
 
-Translation uses Helsinki-NLP/opus-mt-es-en, a MarianMT model trained
-specifically for ES->EN. It outperforms the general-purpose NLLB-200-distilled
-on this language pair and is faster at inference (dedicated model, smaller vocab).
+Two translation engines:
+- "cascade" (default): Parakeet TDT 0.6B v3 (multilingual ASR) -> MarianMT
+  (one Helsinki-NLP/opus-mt model per language direction). Faster on CPU and
+  immune to Canary's autoregressive repetition loops on short inputs.
+- "canary": Canary 1B Flash direct speech translation (AST), single pass.
+  Select via LT_TRANSLATION_ENGINE=canary.
+
+MarianMT outperforms the general-purpose NLLB-200-distilled per pair and is
+faster at inference (dedicated models, smaller vocab).
 """
 from __future__ import annotations
 import os
@@ -14,7 +20,8 @@ import threading
 import wave
 
 _asr = None
-_mt = None
+_mt_models: dict[tuple[str, str], tuple] = {}
+_mt_lock = threading.Lock()
 _piper = None
 _canary = None
 
@@ -29,6 +36,24 @@ _decode_lock = threading.Lock()
 # not cached and download rejected), the server keeps running with Piper.
 _cloning_available = False
 _cloning_error: str | None = None
+
+# Warmup progress, polled via /health while models load. Counts completed
+# warmup tasks — with parallel loading there is no single "current step".
+_warmup_progress_lock = threading.Lock()
+_warmup_tasks_done = 0
+_WARMUP_TASKS_TOTAL = 3
+
+
+def warmup_progress() -> int:
+    """Percentage of warmup tasks completed (0-100)."""
+    with _warmup_progress_lock:
+        return int(100 * _warmup_tasks_done / _WARMUP_TASKS_TOTAL)
+
+
+def _mark_warmup_task_done() -> None:
+    global _warmup_tasks_done
+    with _warmup_progress_lock:
+        _warmup_tasks_done += 1
 
 
 def cloning_available() -> bool:
@@ -64,13 +89,31 @@ def _get_asr():
     return _asr
 
 
-def _get_mt():
-    global _mt
-    if _mt is None:
-        from transformers import MarianMTModel, MarianTokenizer
-        name = "Helsinki-NLP/opus-mt-es-en"
-        _mt = (MarianTokenizer.from_pretrained(name), MarianMTModel.from_pretrained(name))
-    return _mt
+# One MarianMT model per translation direction, mirroring Canary's supported
+# pairs so both engines accept the same UI selector.
+_MARIAN_MODELS = {
+    ("es", "en"): "Helsinki-NLP/opus-mt-es-en",
+    ("en", "es"): "Helsinki-NLP/opus-mt-en-es",
+    ("fr", "en"): "Helsinki-NLP/opus-mt-fr-en",
+    ("en", "fr"): "Helsinki-NLP/opus-mt-en-fr",
+    ("de", "en"): "Helsinki-NLP/opus-mt-de-en",
+    ("en", "de"): "Helsinki-NLP/opus-mt-en-de",
+}
+
+
+def _get_mt(src: str = "es", tgt: str = "en"):
+    """MarianMT (tokenizer, model) for one direction, cached per pair."""
+    pair = (src, tgt)
+    if pair not in _mt_models:
+        with _mt_lock:
+            if pair not in _mt_models:
+                from transformers import MarianMTModel, MarianTokenizer
+                name = _MARIAN_MODELS[pair]
+                _mt_models[pair] = (
+                    MarianTokenizer.from_pretrained(name),
+                    MarianMTModel.from_pretrained(name),
+                )
+    return _mt_models[pair]
 
 
 def _get_piper():
@@ -82,8 +125,13 @@ def _get_piper():
 
 
 def translation_engine() -> str:
-    """Active live-translation engine: "canary" (default) or "legacy"."""
-    return os.environ.get("LT_TRANSLATION_ENGINE", "canary")
+    """Active live-translation engine.
+
+    "cascade" (default) runs Parakeet ASR -> MarianMT; "canary" runs Canary
+    1B Flash direct speech translation. Any non-"canary" value (including the
+    old "legacy") routes to the cascade path.
+    """
+    return os.environ.get("LT_TRANSLATION_ENGINE", "cascade")
 
 
 def _get_canary():
@@ -109,14 +157,38 @@ _SPECIAL_TOKEN = re.compile(r"<\|[^|>]*\|>")
 # silence — retrying in halves would only waste CPU on the live path.
 _BISECT_MIN_SECONDS = 4.0
 
+# Canary 1B Flash is trained on these directions (EN<->DE/ES/FR). Anything
+# else decodes garbage, so reject it at the boundary instead.
+SUPPORTED_LANGUAGE_PAIRS = frozenset(
+    {("es", "en"), ("en", "es"), ("de", "en"), ("en", "de"), ("fr", "en"), ("en", "fr")}
+)
 
-def _decode_ast(audio_path: str) -> str:
+
+def validate_language_pair(src: str, tgt: str) -> tuple[str, str]:
+    """Normalize and validate a translation pair against Canary's support.
+
+    Returns:
+        The normalized (source, target) tuple.
+
+    Raises:
+        ValueError: if the pair is not one Canary 1B Flash supports.
+    """
+    pair = (src.strip().lower(), tgt.strip().lower())
+    if pair not in SUPPORTED_LANGUAGE_PAIRS:
+        supported = ", ".join(sorted(f"{s}->{t}" for s, t in SUPPORTED_LANGUAGE_PAIRS))
+        raise ValueError(
+            f"unsupported language pair: {src}->{tgt} (supported: {supported})"
+        )
+    return pair
+
+
+def _decode_ast(audio_path: str, source_lang: str = "es", target_lang: str = "en") -> str:
     """Raw Canary AST decode of one WAV, sanitized. Empty string = no speech."""
     with _decode_lock:
         out = _get_canary().transcribe(
             [audio_path],
-            source_lang="es",
-            target_lang="en",
+            source_lang=source_lang,
+            target_lang=target_lang,
             task="ast",
             pnc="yes",
             batch_size=1,
@@ -132,7 +204,9 @@ def _decode_ast(audio_path: str) -> str:
     return text
 
 
-def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
+def _decode_or_bisect(
+    audio, sample_rate: int, depth: int, source_lang: str, target_lang: str
+) -> str:
     """Decode a clip; on empty output, split in halves and recover the parts.
 
     Canary AST can emit nothing for a whole segment when a short span inside
@@ -148,7 +222,7 @@ def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
         path = tmp.name
     try:
         sf.write(path, audio, sample_rate)
-        text = _decode_ast(path)
+        text = _decode_ast(path, source_lang=source_lang, target_lang=target_lang)
     finally:
         try:
             os.unlink(path)
@@ -160,13 +234,18 @@ def _decode_or_bisect(audio, sample_rate: int, depth: int) -> str:
         return text
 
     mid = len(audio) // 2
-    left = _decode_or_bisect(audio[:mid], sample_rate, depth - 1)
-    right = _decode_or_bisect(audio[mid:], sample_rate, depth - 1)
+    left = _decode_or_bisect(audio[:mid], sample_rate, depth - 1, source_lang, target_lang)
+    right = _decode_or_bisect(audio[mid:], sample_rate, depth - 1, source_lang, target_lang)
     return " ".join(part for part in (left, right) if part)
 
 
-def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
-    """Translate Spanish speech directly to English text (Canary AST).
+def speech_translate(
+    audio_path: str,
+    allow_bisect: bool = True,
+    source_lang: str = "es",
+    target_lang: str = "en",
+) -> str:
+    """Translate speech directly to target-language text (Canary AST).
 
     The clip is peak-normalized before decoding: quiet mic captures
     (peak ~0.1) make Canary collapse to an empty or degenerate decode that
@@ -177,9 +256,16 @@ def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
         allow_bisect: Recover empty decodes of long clips by decoding halves.
             Disable on the partial-decode hot path, where an empty result is
             transient and two extra decodes per tick would starve finals.
+        source_lang: Spoken language (one of Canary's supported pairs).
+        target_lang: Language to translate into.
+
+    Raises:
+        ValueError: if the language pair is not supported by Canary.
     """
     import numpy as np
     import soundfile as sf
+
+    source_lang, target_lang = validate_language_pair(source_lang, target_lang)
 
     audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
     if audio.ndim == 2:
@@ -188,22 +274,56 @@ def speech_translate(audio_path: str, allow_bisect: bool = True) -> str:
     if peak > 1e-4:
         audio = audio * (0.9 / peak)
 
-    return _decode_or_bisect(audio, sample_rate, depth=1 if allow_bisect else 0)
+    return _decode_or_bisect(
+        audio,
+        sample_rate,
+        depth=1 if allow_bisect else 0,
+        source_lang=source_lang,
+        target_lang=target_lang,
+    )
 
 
 def transcribe(audio_path: str) -> str:
-    """Transcribe a WAV audio file to text using Parakeet (CPU)."""
-    out = _get_asr().transcribe([audio_path])
+    """Transcribe a WAV audio file to text using Parakeet (CPU).
+
+    Serialized through the decode lock: Parakeet is NeMo too, and with
+    cascade partials enabled, /translate and /transcribe-partial can call
+    this concurrently from separate FastAPI threadpool threads.
+    """
+    with _decode_lock:
+        out = _get_asr().transcribe([audio_path])
     item = out[0]
     return getattr(item, "text", item)
 
 
-def translate(text: str) -> str:
-    """Translate Spanish text to English using opus-mt-tc-big-es-en (CPU)."""
-    tok, model = _get_mt()
+def translate(text: str, src: str = "es", tgt: str = "en") -> str:
+    """Translate text with the MarianMT model for the given direction (CPU).
+
+    Raises:
+        ValueError: if the language pair is not supported.
+    """
+    src, tgt = validate_language_pair(src, tgt)
+    tok, model = _get_mt(src, tgt)
     inputs = tok([text], return_tensors="pt", padding=True, truncation=True, max_length=512)
     gen = model.generate(**inputs, max_length=512)
     return tok.batch_decode(gen, skip_special_tokens=True)[0]
+
+
+def transcribe_translate(
+    audio_path: str, source_lang: str = "es", target_lang: str = "en"
+) -> str:
+    """Cascade decode of one WAV: Parakeet transcript -> Marian translation.
+
+    Empty string means no speech — the established "nothing to show" signal.
+
+    Raises:
+        ValueError: if the language pair is not supported.
+    """
+    source_lang, target_lang = validate_language_pair(source_lang, target_lang)
+    text = transcribe(audio_path)
+    if not text.strip():
+        return ""
+    return translate(text, source_lang, target_lang)
 
 
 def synthesize(text: str, out_wav: str) -> None:
@@ -213,21 +333,25 @@ def synthesize(text: str, out_wav: str) -> None:
         voice.synthesize_wav(text, wf)
 
 
-def warmup() -> None:
-    """Load the active engine's models eagerly. Call once at server startup.
+def _load_core_models() -> None:
+    """Load the active translation engine's models (fatal on failure).
 
-    Pocket TTS (voice cloning) is loaded best-effort: any failure is recorded
-    and the server starts without cloning instead of dying. A dead server
-    surfaces to the UI as a bare connection error on every request, which is
-    far worse than a degraded feature.
+    The cascade engine warms Parakeet plus the default es->en Marian; other
+    directions load lazily on the first request that selects them.
     """
-    global _cloning_available, _cloning_error
     if translation_engine() == "canary":
         _get_canary()
     else:
         _get_asr()
         _get_mt()
-    _get_piper()
+
+
+def _load_cloning() -> None:
+    """Load Pocket TTS best-effort: any failure is recorded and the server
+    starts without cloning instead of dying. A dead server surfaces to the UI
+    as a bare connection error on every request, which is far worse than a
+    degraded feature."""
+    global _cloning_available, _cloning_error
     try:
         from .cloned_tts import warmup_engine
         warmup_engine()
@@ -238,6 +362,49 @@ def warmup() -> None:
         traceback.print_exc()
         _cloning_available = False
         _cloning_error = f"{type(e).__name__}: {e}"
+        return
+    # Pre-resolve an existing profile's voice state so the first cloned
+    # synthesis after a restart doesn't pay it inside the request. Purely an
+    # optimization: on failure the state still resolves lazily on demand.
+    try:
+        from .cloned_tts import warmup_cloned
+        warmup_cloned()
+    except Exception:  # noqa: BLE001 — lazy path remains as fallback
+        import traceback
+        traceback.print_exc()
+
+
+def warmup() -> None:
+    """Load the active engine's models eagerly. Call once at server startup.
+
+    The three loads (core engine, Piper, Pocket TTS) are independent and run
+    in parallel threads: weight loading releases the GIL in native code, so
+    the smaller models hide under the Canary load instead of adding to it.
+    Set LT_WARMUP_PARALLEL=0 to force the sequential path (low-RAM machines).
+
+    A core-model failure still propagates out of warmup() — the Rust side
+    relies on the process dying fast instead of hanging until timeout.
+    """
+    global _warmup_tasks_done
+    tasks = (_load_core_models, _get_piper, _load_cloning)
+    with _warmup_progress_lock:
+        _warmup_tasks_done = 0
+
+    def run(task) -> None:
+        task()
+        _mark_warmup_task_done()
+
+    if os.environ.get("LT_WARMUP_PARALLEL", "1") == "0":
+        for task in tasks:
+            run(task)
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = [pool.submit(run, task) for task in tasks]
+        for future in futures:
+            future.result()  # re-raises core/Piper failures
 
 
 def translate_audio(
@@ -252,8 +419,8 @@ def translate_audio(
     Args:
         input_path: Path to the source WAV file.
         out_dir: Directory where output.wav will be written.
-        src: Unused — model is ES->EN only, kept for API compatibility.
-        tgt: Unused — model is ES->EN only, kept for API compatibility.
+        src: Spoken language (any pair both engines support).
+        tgt: Language to translate into.
         use_cloned_voice: If True and a voice profile exists, use Chatterbox
             Turbo instead of Piper for synthesis.
 
@@ -261,22 +428,23 @@ def translate_audio(
         dict with keys: output_wav, source_text, translated_text.
 
     Raises:
-        ValueError: if transcription produces no text.
+        ValueError: if transcription produces no text, or the language pair
+            is unsupported (Canary engine).
     """
     os.makedirs(out_dir, exist_ok=True)
 
     if translation_engine() == "canary":
         # Canary AST: speech -> translated text in one pass. There is no
-        # intermediate Spanish transcript to show.
+        # intermediate source-language transcript to show.
         source_text = ""
-        translated_text = speech_translate(input_path)
+        translated_text = speech_translate(input_path, source_lang=src, target_lang=tgt)
         if not translated_text.strip():
             raise ValueError("transcription produced no text")
     else:
         source_text = transcribe(input_path)
         if not source_text.strip():
             raise ValueError("transcription produced no text")
-        translated_text = translate(source_text)
+        translated_text = translate(source_text, src, tgt)
     out_wav = os.path.join(out_dir, "output.wav")
 
     # Fall back to Piper when cloning was requested but the engine is not

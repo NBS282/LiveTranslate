@@ -82,7 +82,7 @@ def test_translate_audio_uses_piper_when_cloned_synthesis_raises(
 ):
     monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola mundo")
-    monkeypatch.setattr(pipeline, "translate", lambda t: "hello world")
+    monkeypatch.setattr(pipeline, "translate", lambda t, *a, **k: "hello world")
     monkeypatch.setattr(pipeline, "_cloning_available", True)
 
     def boom(text, out_wav):
