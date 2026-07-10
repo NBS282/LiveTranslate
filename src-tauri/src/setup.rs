@@ -105,32 +105,120 @@ fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {
 
 // ── File download ─────────────────────────────────────────────────────────────
 
+const DOWNLOAD_MAX_ATTEMPTS: u32 = 4;
+
+/// Delay before retry number `retry` (1-based): 2s, 4s, 8s.
+fn backoff_delay(retry: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(1u64 << retry)
+}
+
+/// In-progress downloads write to `<dest>.part` and are renamed on completion,
+/// so `dest` never holds a truncated file.
+fn part_path(dest: &std::path::Path) -> PathBuf {
+    let mut name = dest.as_os_str().to_owned();
+    name.push(".part");
+    PathBuf::from(name)
+}
+
+/// A local file needs (re-)downloading when it is missing, or when the remote
+/// size is known and differs from the local one. When the remote size cannot
+/// be determined the local file is trusted.
+fn needs_download(local_size: Option<u64>, remote_size: Option<u64>) -> bool {
+    match (local_size, remote_size) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(local), Some(remote)) => local != remote,
+    }
+}
+
+fn http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// Size the server reports for `url`, via a HEAD request. Best-effort.
+fn remote_content_length(url: &str) -> Option<u64> {
+    let client = http_client().ok()?;
+    let resp = client.head(url).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.content_length().filter(|n| *n > 0)
+}
+
 fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Result<(), String> {
-    use std::io::Write;
+    let part = part_path(dest);
+    let mut last_err = String::new();
+
+    for attempt in 1..=DOWNLOAD_MAX_ATTEMPTS {
+        if attempt > 1 {
+            emit_progress(
+                app,
+                step,
+                0,
+                &format!("Retrying download (attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS})…"),
+            );
+            std::thread::sleep(backoff_delay(attempt - 1));
+        }
+        match download_attempt(app, url, dest, &part, step) {
+            Ok(()) => return Ok(()),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+fn download_attempt(
+    app: &AppHandle,
+    url: &str,
+    dest: &PathBuf,
+    part: &PathBuf,
+    step: &str,
+) -> Result<(), String> {
+    use std::io::{Read, Write};
 
     emit_progress(app, step, 0, &format!("Downloading {url}"));
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = http_client()?;
 
-    let mut resp = client
-        .get(url)
-        .send()
-        .map_err(|e| format!("download failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("download returned HTTP {}", resp.status()));
+    // Resume from an interrupted attempt when a partial file is present.
+    let offset = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(url);
+    if offset > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }
 
-    let total = resp.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-    let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 65536];
+    let mut resp = req.send().map_err(|e| format!("download failed: {e}"))?;
+    let status = resp.status();
 
+    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // The partial file is stale or already past the remote size; discard it
+        // and let the next attempt start from scratch.
+        let _ = std::fs::remove_file(part);
+        return Err("server rejected resume range; restarting download".to_string());
+    }
+
+    let resumed = offset > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
+    if !resumed && !status.is_success() {
+        return Err(format!("download returned HTTP {status}"));
+    }
+
+    let (mut file, mut downloaded, total) = if resumed {
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| e.to_string())?;
+        (file, offset, offset + resp.content_length().unwrap_or(0))
+    } else {
+        // Fresh download, or the server ignored the Range header: truncate.
+        let file = std::fs::File::create(part).map_err(|e| e.to_string())?;
+        (file, 0u64, resp.content_length().unwrap_or(0))
+    };
+
+    let mut buf = [0u8; 65536];
     loop {
-        use std::io::Read;
         let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
             break;
@@ -138,7 +226,7 @@ fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Resu
         file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         downloaded += n as u64;
         if total > 0 {
-            let pct = ((downloaded * 100) / total) as u8;
+            let pct = ((downloaded * 100) / total).min(100) as u8;
             emit_progress(
                 app,
                 step,
@@ -147,7 +235,9 @@ fn download_file(app: &AppHandle, url: &str, dest: &PathBuf, step: &str) -> Resu
             );
         }
     }
+    drop(file);
 
+    std::fs::rename(part, dest).map_err(|e| format!("failed to finalize download: {e}"))?;
     Ok(())
 }
 
@@ -286,21 +376,27 @@ pub fn download_piper_voice(app: &AppHandle) -> Result<(), String> {
     let onnx = piper_voice_path();
     let json = onnx.with_extension("onnx.json");
 
-    if !onnx.exists() {
-        download_file(
-            app,
-            &format!("{base}/en_US-lessac-medium.onnx"),
-            &onnx,
+    let targets = [
+        (
+            format!("{base}/en_US-lessac-medium.onnx"),
+            onnx,
             "Downloading Piper voice model",
-        )?;
-    }
-    if !json.exists() {
-        download_file(
-            app,
-            &format!("{base}/en_US-lessac-medium.onnx.json"),
-            &json,
+        ),
+        (
+            format!("{base}/en_US-lessac-medium.onnx.json"),
+            json,
             "Downloading Piper voice config",
-        )?;
+        ),
+    ];
+
+    for (url, path, step) in targets {
+        let local = std::fs::metadata(&path).ok().map(|m| m.len());
+        // Compare against the size the server reports so a previously truncated
+        // download gets repaired instead of being trusted forever.
+        let remote = remote_content_length(&url);
+        if needs_download(local, remote) {
+            download_file(app, &url, &path, step)?;
+        }
     }
     Ok(())
 }
@@ -778,4 +874,47 @@ fn run_python_script(
         });
     }
     Ok(())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn needs_download_when_local_missing() {
+        assert!(needs_download(None, Some(10)));
+        assert!(needs_download(None, None));
+    }
+
+    #[test]
+    fn trusts_local_file_when_remote_size_unknown() {
+        assert!(!needs_download(Some(10), None));
+    }
+
+    #[test]
+    fn redownloads_on_size_mismatch() {
+        assert!(needs_download(Some(10), Some(20)));
+    }
+
+    #[test]
+    fn skips_download_when_sizes_match() {
+        assert!(!needs_download(Some(10), Some(10)));
+    }
+
+    #[test]
+    fn backoff_doubles_per_retry() {
+        assert_eq!(backoff_delay(1).as_secs(), 2);
+        assert_eq!(backoff_delay(2).as_secs(), 4);
+        assert_eq!(backoff_delay(3).as_secs(), 8);
+    }
+
+    #[test]
+    fn part_path_appends_suffix_without_touching_extension() {
+        let p = part_path(std::path::Path::new("C:/models/voice.onnx"));
+        assert!(p.to_string_lossy().ends_with("voice.onnx.part"));
+        let q = part_path(std::path::Path::new("C:/models/voice.onnx.json"));
+        assert!(q.to_string_lossy().ends_with("voice.onnx.json.part"));
+    }
 }
