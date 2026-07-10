@@ -213,21 +213,21 @@ def synthesize(text: str, out_wav: str) -> None:
         voice.synthesize_wav(text, wf)
 
 
-def warmup() -> None:
-    """Load the active engine's models eagerly. Call once at server startup.
-
-    Pocket TTS (voice cloning) is loaded best-effort: any failure is recorded
-    and the server starts without cloning instead of dying. A dead server
-    surfaces to the UI as a bare connection error on every request, which is
-    far worse than a degraded feature.
-    """
-    global _cloning_available, _cloning_error
+def _load_core_models() -> None:
+    """Load the active translation engine's models (fatal on failure)."""
     if translation_engine() == "canary":
         _get_canary()
     else:
         _get_asr()
         _get_mt()
-    _get_piper()
+
+
+def _load_cloning() -> None:
+    """Load Pocket TTS best-effort: any failure is recorded and the server
+    starts without cloning instead of dying. A dead server surfaces to the UI
+    as a bare connection error on every request, which is far worse than a
+    degraded feature."""
+    global _cloning_available, _cloning_error
     try:
         from .cloned_tts import warmup_engine
         warmup_engine()
@@ -238,6 +238,42 @@ def warmup() -> None:
         traceback.print_exc()
         _cloning_available = False
         _cloning_error = f"{type(e).__name__}: {e}"
+        return
+    # Pre-resolve an existing profile's voice state so the first cloned
+    # synthesis after a restart doesn't pay it inside the request. Purely an
+    # optimization: on failure the state still resolves lazily on demand.
+    try:
+        from .cloned_tts import warmup_cloned
+        warmup_cloned()
+    except Exception:  # noqa: BLE001 — lazy path remains as fallback
+        import traceback
+        traceback.print_exc()
+
+
+def warmup() -> None:
+    """Load the active engine's models eagerly. Call once at server startup.
+
+    The three loads (core engine, Piper, Pocket TTS) are independent and run
+    in parallel threads: weight loading releases the GIL in native code, so
+    the smaller models hide under the Canary load instead of adding to it.
+    Set LT_WARMUP_PARALLEL=0 to force the sequential path (low-RAM machines).
+
+    A core-model failure still propagates out of warmup() — the Rust side
+    relies on the process dying fast instead of hanging until timeout.
+    """
+    tasks = (_load_core_models, _get_piper, _load_cloning)
+
+    if os.environ.get("LT_WARMUP_PARALLEL", "1") == "0":
+        for task in tasks:
+            task()
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = [pool.submit(task) for task in tasks]
+        for future in futures:
+            future.result()  # re-raises core/Piper failures
 
 
 def translate_audio(
