@@ -3,9 +3,15 @@
 Models are loaded lazily on first use and kept in module-level singletons
 so the server process pays the load cost only once.
 
-Translation uses Helsinki-NLP/opus-mt-es-en, a MarianMT model trained
-specifically for ES->EN. It outperforms the general-purpose NLLB-200-distilled
-on this language pair and is faster at inference (dedicated model, smaller vocab).
+Two translation engines:
+- "cascade" (default): Parakeet TDT 0.6B v3 (multilingual ASR) -> MarianMT
+  (one Helsinki-NLP/opus-mt model per language direction). Faster on CPU and
+  immune to Canary's autoregressive repetition loops on short inputs.
+- "canary": Canary 1B Flash direct speech translation (AST), single pass.
+  Select via LT_TRANSLATION_ENGINE=canary.
+
+MarianMT outperforms the general-purpose NLLB-200-distilled per pair and is
+faster at inference (dedicated models, smaller vocab).
 """
 from __future__ import annotations
 import os
@@ -14,7 +20,8 @@ import threading
 import wave
 
 _asr = None
-_mt = None
+_mt_models: dict[tuple[str, str], tuple] = {}
+_mt_lock = threading.Lock()
 _piper = None
 _canary = None
 
@@ -82,13 +89,31 @@ def _get_asr():
     return _asr
 
 
-def _get_mt():
-    global _mt
-    if _mt is None:
-        from transformers import MarianMTModel, MarianTokenizer
-        name = "Helsinki-NLP/opus-mt-es-en"
-        _mt = (MarianTokenizer.from_pretrained(name), MarianMTModel.from_pretrained(name))
-    return _mt
+# One MarianMT model per translation direction, mirroring Canary's supported
+# pairs so both engines accept the same UI selector.
+_MARIAN_MODELS = {
+    ("es", "en"): "Helsinki-NLP/opus-mt-es-en",
+    ("en", "es"): "Helsinki-NLP/opus-mt-en-es",
+    ("fr", "en"): "Helsinki-NLP/opus-mt-fr-en",
+    ("en", "fr"): "Helsinki-NLP/opus-mt-en-fr",
+    ("de", "en"): "Helsinki-NLP/opus-mt-de-en",
+    ("en", "de"): "Helsinki-NLP/opus-mt-en-de",
+}
+
+
+def _get_mt(src: str = "es", tgt: str = "en"):
+    """MarianMT (tokenizer, model) for one direction, cached per pair."""
+    pair = (src, tgt)
+    if pair not in _mt_models:
+        with _mt_lock:
+            if pair not in _mt_models:
+                from transformers import MarianMTModel, MarianTokenizer
+                name = _MARIAN_MODELS[pair]
+                _mt_models[pair] = (
+                    MarianTokenizer.from_pretrained(name),
+                    MarianMTModel.from_pretrained(name),
+                )
+    return _mt_models[pair]
 
 
 def _get_piper():
@@ -100,8 +125,13 @@ def _get_piper():
 
 
 def translation_engine() -> str:
-    """Active live-translation engine: "canary" (default) or "legacy"."""
-    return os.environ.get("LT_TRANSLATION_ENGINE", "canary")
+    """Active live-translation engine.
+
+    "cascade" (default) runs Parakeet ASR -> MarianMT; "canary" runs Canary
+    1B Flash direct speech translation. Any non-"canary" value (including the
+    old "legacy") routes to the cascade path.
+    """
+    return os.environ.get("LT_TRANSLATION_ENGINE", "cascade")
 
 
 def _get_canary():
@@ -254,18 +284,46 @@ def speech_translate(
 
 
 def transcribe(audio_path: str) -> str:
-    """Transcribe a WAV audio file to text using Parakeet (CPU)."""
-    out = _get_asr().transcribe([audio_path])
+    """Transcribe a WAV audio file to text using Parakeet (CPU).
+
+    Serialized through the decode lock: Parakeet is NeMo too, and with
+    cascade partials enabled, /translate and /transcribe-partial can call
+    this concurrently from separate FastAPI threadpool threads.
+    """
+    with _decode_lock:
+        out = _get_asr().transcribe([audio_path])
     item = out[0]
     return getattr(item, "text", item)
 
 
-def translate(text: str) -> str:
-    """Translate Spanish text to English using opus-mt-tc-big-es-en (CPU)."""
-    tok, model = _get_mt()
+def translate(text: str, src: str = "es", tgt: str = "en") -> str:
+    """Translate text with the MarianMT model for the given direction (CPU).
+
+    Raises:
+        ValueError: if the language pair is not supported.
+    """
+    src, tgt = validate_language_pair(src, tgt)
+    tok, model = _get_mt(src, tgt)
     inputs = tok([text], return_tensors="pt", padding=True, truncation=True, max_length=512)
     gen = model.generate(**inputs, max_length=512)
     return tok.batch_decode(gen, skip_special_tokens=True)[0]
+
+
+def transcribe_translate(
+    audio_path: str, source_lang: str = "es", target_lang: str = "en"
+) -> str:
+    """Cascade decode of one WAV: Parakeet transcript -> Marian translation.
+
+    Empty string means no speech — the established "nothing to show" signal.
+
+    Raises:
+        ValueError: if the language pair is not supported.
+    """
+    source_lang, target_lang = validate_language_pair(source_lang, target_lang)
+    text = transcribe(audio_path)
+    if not text.strip():
+        return ""
+    return translate(text, source_lang, target_lang)
 
 
 def synthesize(text: str, out_wav: str) -> None:
@@ -276,7 +334,11 @@ def synthesize(text: str, out_wav: str) -> None:
 
 
 def _load_core_models() -> None:
-    """Load the active translation engine's models (fatal on failure)."""
+    """Load the active translation engine's models (fatal on failure).
+
+    The cascade engine warms Parakeet plus the default es->en Marian; other
+    directions load lazily on the first request that selects them.
+    """
     if translation_engine() == "canary":
         _get_canary()
     else:
@@ -357,10 +419,8 @@ def translate_audio(
     Args:
         input_path: Path to the source WAV file.
         out_dir: Directory where output.wav will be written.
-        src: Spoken language. Honored by the Canary engine (any supported
-            pair); the legacy Parakeet+Marian path is ES->EN only and
-            ignores it.
-        tgt: Language to translate into. Same engine caveat as `src`.
+        src: Spoken language (any pair both engines support).
+        tgt: Language to translate into.
         use_cloned_voice: If True and a voice profile exists, use Chatterbox
             Turbo instead of Piper for synthesis.
 
@@ -384,7 +444,7 @@ def translate_audio(
         source_text = transcribe(input_path)
         if not source_text.strip():
             raise ValueError("transcription produced no text")
-        translated_text = translate(source_text)
+        translated_text = translate(source_text, src, tgt)
     out_wav = os.path.join(out_dir, "output.wav")
 
     # Fall back to Piper when cloning was requested but the engine is not

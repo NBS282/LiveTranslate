@@ -12,6 +12,7 @@ parallel — per-download progress hooks cannot be aggregated across threads.
 """
 from __future__ import annotations
 
+import functools
 import os
 import sys
 import threading
@@ -19,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Sum of all model downloads, used to turn cache-dir growth into a rough
 # overall percentage. Precision does not matter: the bar just has to move.
-TOTAL_DOWNLOAD_BYTES = 5_600_000_000
+# ~5.6 GB core models + ~1.5 GB extra MarianMT directions.
+TOTAL_DOWNLOAD_BYTES = 7_100_000_000
 
 PROGRESS_PREFIX = "PROGRESS:"
 
@@ -64,6 +66,20 @@ def download_marian() -> None:
     MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-es-en")
 
 
+# Non-default translation directions for the cascade engine (~300 MB each).
+# es-en (download_marian) stays required; these are best-effort — a missing
+# pair simply downloads lazily on the first request that selects it.
+EXTRA_MARIAN_PAIRS = ["en-es", "fr-en", "en-fr", "de-en", "en-de"]
+
+
+def _download_marian_pair(pair: str) -> None:
+    from transformers import MarianMTModel, MarianTokenizer
+
+    name = f"Helsinki-NLP/opus-mt-{pair}"
+    MarianTokenizer.from_pretrained(name)
+    MarianMTModel.from_pretrained(name)
+
+
 def download_parakeet() -> None:
     from huggingface_hub import snapshot_download
 
@@ -98,7 +114,10 @@ def download_all(max_workers: int = 2) -> None:
         ("Parakeet ASR (~1.1 GB)", download_parakeet),
         ("MarianMT ES->EN (~300 MB)", download_marian),
     ]
-    optional = [("Pocket TTS (~200 MB)", download_pocket_tts)]
+    optional = [("Pocket TTS (~200 MB)", download_pocket_tts)] + [
+        (f"MarianMT {pair} (~300 MB)", functools.partial(_download_marian_pair, pair))
+        for pair in EXTRA_MARIAN_PAIRS
+    ]
 
     failed = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:

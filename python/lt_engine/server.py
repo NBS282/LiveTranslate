@@ -11,6 +11,7 @@ from .pipeline import (
     cloning_available,
     cloning_error,
     speech_translate,
+    transcribe_translate,
     translate_audio,
     translation_engine,
     validate_language_pair,
@@ -125,21 +126,20 @@ def transcribe_partial(req: PartialRequest) -> dict:
     _validate_pair_or_400(req.src, req.tgt)
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
-    if translation_engine() != "canary":
-        # Legacy engine has no cheap partial-decode path. Lazy-loading Canary
-        # here would defeat the rollback guarantee (3.5GB model load under
-        # LT_TRANSLATION_ENGINE=legacy). Empty text is the established
-        # "nothing to show" signal the Rust caller swallows.
-        return {"text": ""}
     try:
-        return {
-            "text": speech_translate(
-                req.input_path,
-                allow_bisect=False,
-                source_lang=req.src,
-                target_lang=req.tgt,
-            )
-        }
+        if translation_engine() == "canary":
+            return {
+                "text": speech_translate(
+                    req.input_path,
+                    allow_bisect=False,
+                    source_lang=req.src,
+                    target_lang=req.tgt,
+                )
+            }
+        # Cascade partial: Parakeet transcript -> Marian translation. Never
+        # touches Canary, so the 3.5GB model is not lazy-loaded under the
+        # cascade engine.
+        return {"text": transcribe_translate(req.input_path, req.src, req.tgt)}
     except Exception as e:
         import traceback
         traceback.print_exc()

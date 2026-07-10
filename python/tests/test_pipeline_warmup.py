@@ -116,7 +116,7 @@ def test_translate_audio_falls_back_to_piper_when_cloning_unavailable(
 ):
     monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola mundo")
-    monkeypatch.setattr(pipeline, "translate", lambda t: "hello world")
+    monkeypatch.setattr(pipeline, "translate", lambda t, *a, **k: "hello world")
     used = {}
 
     def fake_piper(text, out_wav):

@@ -166,6 +166,7 @@ def test_translate_missing_file_400(monkeypatch):
 
 def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
     monkeypatch.setattr(server, "speech_translate", lambda p, **kw: "Partial text")
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
@@ -178,6 +179,7 @@ def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
 
 def test_transcribe_partial_forwards_language_pair(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
     seen = {}
 
     def fake(p, **kw):
@@ -239,28 +241,38 @@ def test_transcribe_partial_missing_file_400(monkeypatch):
         assert r.status_code == 400
 
 
-def test_transcribe_partial_returns_empty_under_legacy_engine(monkeypatch, tmp_path):
-    """Under LT_TRANSLATION_ENGINE=legacy, /transcribe-partial must not lazy-load
-    the 3.5GB Canary model — that would break the rollback guarantee. It must
-    short-circuit to the empty-text signal without calling speech_translate."""
+def test_transcribe_partial_cascade_uses_parakeet_marian(monkeypatch, tmp_path):
+    """Under the default cascade engine, partials run Parakeet -> Marian and
+    must never touch Canary (the 3.5GB model must not lazy-load)."""
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "legacy")
+    monkeypatch.setattr(server, "translation_engine", lambda: "cascade")
 
-    def must_not_be_called(path):
-        raise AssertionError("must not be called")
+    def must_not_be_called(path, **kw):
+        raise AssertionError("Canary path must not be used under cascade")
 
     monkeypatch.setattr(server, "speech_translate", must_not_be_called)
+    seen = {}
+
+    def fake_cascade(path, src, tgt):
+        seen["args"] = (src, tgt)
+        return "Partial text"
+
+    monkeypatch.setattr(server, "transcribe_translate", fake_cascade)
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
         _wait_ready(client)
-        r = client.post("/transcribe-partial", json={"input_path": str(f)})
+        r = client.post(
+            "/transcribe-partial", json={"input_path": str(f), "src": "en", "tgt": "fr"}
+        )
         assert r.status_code == 200
-        assert r.json() == {"text": ""}
+        assert r.json() == {"text": "Partial text"}
+        assert seen["args"] == ("en", "fr")
 
 
 def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
+    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
 
     def boom(path, **kw):
         raise RuntimeError("decoder exploded")

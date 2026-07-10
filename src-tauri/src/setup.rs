@@ -612,7 +612,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         app,
         "Downloading translation models",
         91,
-        "~5.6 GB — first-time download, please wait…",
+        "~7 GB — first-time download, please wait…",
     );
     let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
     // Create nemo sub-dir before the script runs so it doesn't hit a permissions

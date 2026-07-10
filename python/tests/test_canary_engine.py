@@ -122,7 +122,7 @@ def test_translate_audio_canary_empty_raises_no_text(monkeypatch, tmp_path):
 def test_translate_audio_legacy_path_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola")
-    monkeypatch.setattr(pipeline, "translate", lambda t: "hello")
+    monkeypatch.setattr(pipeline, "translate", lambda t, *a, **k: "hello")
     used = {}
     monkeypatch.setattr(
         pipeline, "synthesize", lambda text, out_wav: used.update(text=text)

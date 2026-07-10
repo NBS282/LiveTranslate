@@ -13,7 +13,23 @@ def _patch_downloads(monkeypatch, calls):
     monkeypatch.setattr(sm, "download_parakeet", lambda: calls.append("parakeet"))
     monkeypatch.setattr(sm, "download_marian", lambda: calls.append("marian"))
     monkeypatch.setattr(sm, "download_pocket_tts", lambda: calls.append("pocket"))
+    monkeypatch.setattr(
+        sm, "_download_marian_pair", lambda pair: calls.append(f"marian-{pair}")
+    )
     monkeypatch.setattr(sm, "_patch_windows_symlinks", lambda: None)
+
+
+_ALL_EXPECTED = {
+    "canary",
+    "parakeet",
+    "marian",
+    "pocket",
+    "marian-en-es",
+    "marian-fr-en",
+    "marian-en-fr",
+    "marian-de-en",
+    "marian-en-de",
+}
 
 
 def test_download_all_downloads_every_model(monkeypatch):
@@ -22,7 +38,7 @@ def test_download_all_downloads_every_model(monkeypatch):
 
     sm.download_all(max_workers=2)
 
-    assert set(calls) == {"canary", "parakeet", "marian", "pocket"}
+    assert set(calls) == _ALL_EXPECTED
 
 
 def test_optional_pocket_tts_failure_does_not_abort(monkeypatch):
@@ -36,7 +52,23 @@ def test_optional_pocket_tts_failure_does_not_abort(monkeypatch):
 
     sm.download_all(max_workers=2)  # must not raise
 
-    assert set(calls) == {"canary", "parakeet", "marian"}
+    assert set(calls) == _ALL_EXPECTED - {"pocket"}
+
+
+def test_optional_marian_pair_failure_does_not_abort(monkeypatch):
+    """Non-default Marian pairs are optional at setup time: a failure only
+    means that pair downloads lazily on the first request that selects it."""
+    calls = []
+    _patch_downloads(monkeypatch, calls)
+
+    def boom(pair):
+        raise RuntimeError("network hiccup")
+
+    monkeypatch.setattr(sm, "_download_marian_pair", boom)
+
+    sm.download_all(max_workers=2)  # must not raise
+
+    assert {"canary", "parakeet", "marian", "pocket"} <= set(calls)
 
 
 def test_required_model_failure_raises_after_all_settle(monkeypatch):
