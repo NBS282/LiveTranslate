@@ -764,7 +764,16 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
     };
 
     // --- Channel conversion ---
-    let final_samples = convert_channels(&resampled, wav_channels, native_channels);
+    let mut final_samples = convert_channels(&resampled, wav_channels, native_channels);
+
+    // Append a silent tail so the LAST thing fed to the device is silence,
+    // not speech. The drain flag below flips when the callback consumes the
+    // final sample of THIS vector — any output latency past our drain pad
+    // (device buffers, VB-Cable's internal ring) then swallows silence
+    // instead of clipping the end of the phrase.
+    let tail = tail_silence_samples(native_rate, native_channels, PLAYBACK_TAIL_SILENCE_MS);
+    final_samples.extend(std::iter::repeat(0.0f32).take(tail));
+
     let duration_secs = final_samples.len() as f32 / native_rate as f32 / native_channels as f32;
 
     // --- Build and play stream ---
@@ -815,10 +824,19 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
 
     // Generous timeout: covers duration + any plausible startup latency, and
     // guarantees we never hang if the device dies mid-playback.
+    let started = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs_f32(duration_secs + 2.0);
     if !wait_until_true(&drained, timeout) {
         eprintln!("playback: drain flag never set, timed out after {timeout:?}");
     }
+    // Diagnostic: how far the callback-side drain ran ahead of real time. A
+    // large gap means the device buffers deep and the tail relies on the
+    // silence pad above — data we need if clipping is ever reported again.
+    eprintln!(
+        "live: playback drained in {:.2}s (audio+tail {:.2}s)",
+        started.elapsed().as_secs_f32(),
+        duration_secs,
+    );
     // The flag flips when the callback FILLS the last buffer; the device still
     // has up to that buffer plus its output latency left to render.
     std::thread::sleep(std::time::Duration::from_millis(PLAYBACK_DRAIN_PAD_MS));
@@ -829,6 +847,15 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
 /// Milliseconds to keep the output stream alive after the callback consumed
 /// the last sample: one hardware buffer + typical WASAPI output latency.
 const PLAYBACK_DRAIN_PAD_MS: u64 = 250;
+
+/// Milliseconds of silence appended after the phrase so residual device
+/// latency (WASAPI buffers, VB-Cable's ring) clips silence, never speech.
+const PLAYBACK_TAIL_SILENCE_MS: usize = 300;
+
+/// Interleaved sample count for `ms` of silence at the given rate/channels.
+fn tail_silence_samples(rate: usize, channels: usize, ms: usize) -> usize {
+    rate * channels * ms / 1000
+}
 
 /// Polls `flag` every 10 ms until it is true (returns true) or `timeout`
 /// elapses (returns false).
@@ -1092,6 +1119,14 @@ mod tests {
         let mono = vec![0.5f32, -0.3, 0.1];
         let stereo = convert_channels(&mono, 1, 2);
         assert_eq!(stereo, vec![0.5, 0.5, -0.3, -0.3, 0.1, 0.1]);
+    }
+
+    #[test]
+    fn tail_silence_matches_rate_and_channels() {
+        // 300 ms at 48 kHz stereo = 48000 * 2 * 0.3 interleaved samples.
+        assert_eq!(tail_silence_samples(48_000, 2, 300), 28_800);
+        assert_eq!(tail_silence_samples(16_000, 1, 300), 4_800);
+        assert_eq!(tail_silence_samples(44_100, 2, 0), 0);
     }
 
     #[test]
