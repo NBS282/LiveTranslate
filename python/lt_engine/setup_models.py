@@ -20,8 +20,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Sum of all model downloads, used to turn cache-dir growth into a rough
 # overall percentage. Precision does not matter: the bar just has to move.
-# ~5.6 GB core models + ~1.5 GB extra MarianMT directions.
-TOTAL_DOWNLOAD_BYTES = 7_100_000_000
+# Parakeet ~1.1 GB + six MarianMT directions ~1.8 GB + Pocket TTS ~200 MB.
+# Canary (~3.5 GB) is NOT part of setup: the cascade engine is the default,
+# and the canary engine lazy-downloads its model on first warmup instead.
+TOTAL_DOWNLOAD_BYTES = 3_600_000_000
 
 PROGRESS_PREFIX = "PROGRESS:"
 
@@ -87,6 +89,9 @@ def download_parakeet() -> None:
 
 
 def download_canary() -> None:
+    """Not called by setup. Kept for manually pre-fetching the canary
+    engine's model (LT_TRANSLATION_ENGINE=canary lazy-downloads it
+    otherwise on first warmup)."""
     from huggingface_hub import snapshot_download
 
     snapshot_download("nvidia/canary-1b-flash")
@@ -110,7 +115,6 @@ def download_all(max_workers: int = 2) -> None:
     _patch_windows_symlinks()
 
     required = [
-        ("Canary 1B Flash (~3.5 GB)", download_canary),
         ("Parakeet ASR (~1.1 GB)", download_parakeet),
         ("MarianMT ES->EN (~300 MB)", download_marian),
     ]

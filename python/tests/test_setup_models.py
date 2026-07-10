@@ -19,8 +19,10 @@ def _patch_downloads(monkeypatch, calls):
     monkeypatch.setattr(sm, "_patch_windows_symlinks", lambda: None)
 
 
+# Canary is deliberately absent: the cascade engine is the default and the
+# 3.5 GB model would double the first-run download. Selecting the canary
+# engine later lazy-downloads it on that first warmup instead.
 _ALL_EXPECTED = {
-    "canary",
     "parakeet",
     "marian",
     "pocket",
@@ -30,6 +32,15 @@ _ALL_EXPECTED = {
     "marian-de-en",
     "marian-en-de",
 }
+
+
+def test_setup_does_not_download_canary(monkeypatch):
+    calls = []
+    _patch_downloads(monkeypatch, calls)
+
+    sm.download_all(max_workers=2)
+
+    assert "canary" not in calls
 
 
 def test_download_all_downloads_every_model(monkeypatch):
@@ -68,7 +79,7 @@ def test_optional_marian_pair_failure_does_not_abort(monkeypatch):
 
     sm.download_all(max_workers=2)  # must not raise
 
-    assert {"canary", "parakeet", "marian", "pocket"} <= set(calls)
+    assert {"parakeet", "marian", "pocket"} <= set(calls)
 
 
 def test_required_model_failure_raises_after_all_settle(monkeypatch):
@@ -78,13 +89,13 @@ def test_required_model_failure_raises_after_all_settle(monkeypatch):
     def boom():
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(sm, "download_canary", boom)
+    monkeypatch.setattr(sm, "download_parakeet", boom)
 
-    with pytest.raises(RuntimeError, match="Canary"):
+    with pytest.raises(RuntimeError, match="Parakeet"):
         sm.download_all(max_workers=2)
 
     # The other downloads still ran — a partial cache shortens the retry.
-    assert {"parakeet", "marian"} <= set(calls)
+    assert "marian" in calls
 
 
 def test_main_returns_nonzero_on_required_failure(monkeypatch):
