@@ -777,13 +777,33 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
         buffer_size: cpal::BufferSize::Default,
     };
 
+    // Dropping the stream stops output instantly, so we must not leave this
+    // function until the device has actually rendered every sample. A fixed
+    // sleep measured from play() undershoots: WASAPI stream startup (device
+    // init + buffer priming) delays the first audible sample by 50-300 ms,
+    // which used to cut the tail of every phrase — badly so on short clips.
+    // Instead the callback flags when it has consumed the final sample, and
+    // we wait for that condition plus a drain pad for the last buffer.
+    let drained = Arc::new(AtomicBool::new(false));
+    let drained_cb = drained.clone();
+
     let stream = device
         .build_output_stream(
             &stream_cfg,
             move |data: &mut [f32], _| {
                 let mut iter = samples_cb.lock().unwrap();
+                let mut exhausted = false;
                 for d in data.iter_mut() {
-                    *d = iter.next().unwrap_or(0.0);
+                    match iter.next() {
+                        Some(s) => *d = s,
+                        None => {
+                            *d = 0.0;
+                            exhausted = true;
+                        }
+                    }
+                }
+                if exhausted {
+                    drained_cb.store(true, Ordering::Relaxed);
                 }
             },
             |e| eprintln!("playback stream error: {e}"),
@@ -792,9 +812,35 @@ fn play_wav_to_device(wav_path: &std::path::Path, output_device_name: &str) -> R
         .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_secs_f32(duration_secs + 0.1));
+
+    // Generous timeout: covers duration + any plausible startup latency, and
+    // guarantees we never hang if the device dies mid-playback.
+    let timeout = std::time::Duration::from_secs_f32(duration_secs + 2.0);
+    if !wait_until_true(&drained, timeout) {
+        eprintln!("playback: drain flag never set, timed out after {timeout:?}");
+    }
+    // The flag flips when the callback FILLS the last buffer; the device still
+    // has up to that buffer plus its output latency left to render.
+    std::thread::sleep(std::time::Duration::from_millis(PLAYBACK_DRAIN_PAD_MS));
 
     Ok(())
+}
+
+/// Milliseconds to keep the output stream alive after the callback consumed
+/// the last sample: one hardware buffer + typical WASAPI output latency.
+const PLAYBACK_DRAIN_PAD_MS: u64 = 250;
+
+/// Polls `flag` every 10 ms until it is true (returns true) or `timeout`
+/// elapses (returns false).
+fn wait_until_true(flag: &AtomicBool, timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if flag.load(Ordering::Relaxed) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    flag.load(Ordering::Relaxed)
 }
 
 /// Starts PTT capture: same thread layout as `start()` but uses `run_producer_ptt`
@@ -1046,6 +1092,31 @@ mod tests {
         let mono = vec![0.5f32, -0.3, 0.1];
         let stereo = convert_channels(&mono, 1, 2);
         assert_eq!(stereo, vec![0.5, 0.5, -0.3, -0.3, 0.1, 0.1]);
+    }
+
+    #[test]
+    fn wait_until_returns_true_when_flag_set() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_setter = flag.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            flag_setter.store(true, Ordering::Relaxed);
+        });
+
+        let ok = wait_until_true(&flag, std::time::Duration::from_secs(2));
+
+        assert!(ok);
+    }
+
+    #[test]
+    fn wait_until_times_out_when_flag_never_set() {
+        let flag = Arc::new(AtomicBool::new(false));
+
+        let start = std::time::Instant::now();
+        let ok = wait_until_true(&flag, std::time::Duration::from_millis(50));
+
+        assert!(!ok);
+        assert!(start.elapsed() >= std::time::Duration::from_millis(50));
     }
 
     #[test]
