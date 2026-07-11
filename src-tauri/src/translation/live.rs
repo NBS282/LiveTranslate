@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json;
 use tauri::{AppHandle, Emitter};
 
+use crate::translation::engine::TranslationEngine;
 use crate::translation::segmenter::{Segmenter, FRAME_SAMPLES_16K};
 
 /// Minimum segment length in samples at 16 kHz (0.5 s).
@@ -42,73 +43,15 @@ pub struct LiveSession {
     pub stop: Arc<AtomicBool>,
 }
 
-/// Writes 16 kHz mono i16 samples to a uniquely-named temp wav and returns its path.
-fn write_segment_wav(samples: &[i16]) -> Result<PathBuf, String> {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let path = std::env::temp_dir().join(format!(
-        "livetranslate-seg-{}-{}.wav",
-        std::process::id(),
-        unique
-    ));
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: 16_000,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
-    for s in samples {
-        w.write_sample(*s).map_err(|e| e.to_string())?;
-    }
-    w.finalize().map_err(|e| e.to_string())?;
-    Ok(path)
-}
-
-/// Maximum failed-segment WAVs kept for diagnosis. These are raw mic audio, so
-/// the directory is ring-buffered: oldest files are pruned when new ones arrive.
-const MAX_FAILED_SEGMENTS: usize = 10;
-
-/// Moves a failed segment WAV into <root>/logs for offline post-mortem,
-/// pruning the oldest kept files beyond `MAX_FAILED_SEGMENTS`.
-fn keep_failed_segment(p: &std::path::Path) {
-    let logs = crate::translation::sidecar::repo_root().join("logs");
-    let keep = logs.join(format!(
-        "failed-{}",
-        p.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let _ = std::fs::create_dir_all(&logs);
-    // %TEMP% and the data dir can live on different volumes in a packaged
-    // install, where rename fails cross-device — fall back to copy+delete.
-    let kept = std::fs::rename(p, &keep).is_ok()
-        || (std::fs::copy(p, &keep).is_ok() && {
-            let _ = std::fs::remove_file(p);
-            true
-        });
-    if !kept {
-        let _ = std::fs::remove_file(p);
-        return;
-    }
-    eprintln!("live: failed segment kept at {}", keep.display());
-
-    // Prune: keep only the newest MAX_FAILED_SEGMENTS failed-*.wav files.
-    if let Ok(entries) = std::fs::read_dir(&logs) {
-        let mut failed: Vec<_> = entries
-            .filter_map(Result::ok)
-            .filter(|e| {
-                e.file_name().to_string_lossy().starts_with("failed-")
-                    && e.file_name().to_string_lossy().ends_with(".wav")
-            })
-            .collect();
-        // Names embed a nanosecond timestamp, so lexical order is age order.
-        failed.sort_by_key(|e| e.file_name());
-        while failed.len() > MAX_FAILED_SEGMENTS {
-            let oldest = failed.remove(0);
-            let _ = std::fs::remove_file(oldest.path());
-        }
-    }
+/// Bundles the per-session translation parameters passed into `run_worker`.
+/// Grouped together (rather than three separate positional args) so adding a
+/// config knob — like the engine seam below — doesn't grow `run_worker`'s
+/// argument list further.
+#[derive(Clone)]
+struct WorkerConfig {
+    use_cloned_voice: bool,
+    lang: crate::translation::engine_server::LangPair,
+    engine: Arc<dyn TranslationEngine>,
 }
 
 /// Playback thread: plays each translated WAV to `output_device` serially, then
@@ -256,8 +199,7 @@ fn run_worker(
     app: AppHandle,
     stop: Arc<AtomicBool>,
     play_tx: Sender<PathBuf>,
-    use_cloned_voice: bool,
-    lang: crate::translation::engine_server::LangPair,
+    config: WorkerConfig,
     pending_finals: Arc<AtomicUsize>,
 ) {
     // Tracks the previous segment's translated text (trimmed, lowercased). Canary
@@ -314,27 +256,17 @@ fn run_worker(
                     continue;
                 }
 
-                let translate_result = write_segment_wav(&samples).and_then(|p| {
-                    let result = crate::translation::engine_server::translate_ex(
-                        &p,
-                        use_cloned_voice,
-                        &lang,
-                    );
-                    // Keep the audio of failed LONG segments for post-mortem: an
-                    // "empty transcription" on >=4s of VAD-voiced audio is a decode
-                    // bug we can only diagnose by re-running the exact input offline.
-                    // Short failures are breath tails (expected, benign) — retaining
-                    // those would accumulate raw mic audio on disk for no value.
-                    if result.is_err() && samples.len() >= 64_000 {
-                        keep_failed_segment(&p);
-                    } else {
-                        let _ = std::fs::remove_file(&p);
-                    }
-                    result
-                });
+                let translate_result = config.engine.decode_and_synthesize(
+                    &samples,
+                    config.use_cloned_voice,
+                    &config.lang,
+                );
 
                 match &translate_result {
-                    Ok(out) => eprintln!("live: segment translated -> {:.60}", out.translated_text),
+                    Ok(out) => eprintln!(
+                        "live: segment translated -> {:.60}",
+                        out.decoded.translated_text
+                    ),
                     Err(e) => eprintln!("live: segment translate FAILED: {e:.120}"),
                 }
 
@@ -358,15 +290,15 @@ fn run_worker(
                 // English (or too short/ambiguous to translate). Skip — it adds no
                 // value to surface an identical ES/EN pair to the user.
                 if let Ok(ref out) = translate_result {
-                    if out.source_text.trim().to_lowercase()
-                        == out.translated_text.trim().to_lowercase()
+                    if out.decoded.source_text.trim().to_lowercase()
+                        == out.decoded.translated_text.trim().to_lowercase()
                     {
                         eprintln!("live: segment skipped (source == target)");
                         let _ = app.emit(
                             "ptt-diag",
                             serde_json::json!({
                                 "event": "skipped-source-equals-target",
-                                "source": out.source_text,
+                                "source": out.decoded.source_text,
                             }),
                         );
                         pending_finals.fetch_sub(1, Ordering::Relaxed);
@@ -380,8 +312,8 @@ fn run_worker(
                 // verbatim, it's very likely echo/feedback (output device audio
                 // bleeding into the mic) rather than genuinely repeated speech.
                 if let Ok(ref out) = translate_result {
-                    let translated_lower = out.translated_text.trim().to_lowercase();
-                    let is_echo = out.source_text.is_empty()
+                    let translated_lower = out.decoded.translated_text.trim().to_lowercase();
+                    let is_echo = out.decoded.source_text.is_empty()
                         && !translated_lower.is_empty()
                         && translated_lower == prev_translated_lower;
                     prev_translated_lower = translated_lower;
@@ -391,7 +323,7 @@ fn run_worker(
                             "ptt-diag",
                             serde_json::json!({
                                 "event": "skipped-duplicate-translation",
-                                "text": out.translated_text,
+                                "text": out.decoded.translated_text,
                             }),
                         );
                         pending_finals.fetch_sub(1, Ordering::Relaxed);
@@ -401,8 +333,8 @@ fn run_worker(
 
                 let evt = match &translate_result {
                     Ok(out) => PhraseEvent {
-                        source_text: out.source_text.clone(),
-                        translated_text: out.translated_text.clone(),
+                        source_text: out.decoded.source_text.clone(),
+                        translated_text: out.decoded.translated_text.clone(),
                         error: None,
                     },
                     Err(e) => PhraseEvent {
@@ -437,6 +369,7 @@ pub fn start(
     app: AppHandle,
     use_cloned_voice: bool,
     lang: crate::translation::engine_server::LangPair,
+    engine: Arc<dyn TranslationEngine>,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -488,15 +421,18 @@ pub fn start(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
-        let lang_worker = lang.clone();
+        let worker_config = WorkerConfig {
+            use_cloned_voice,
+            lang: lang.clone(),
+            engine: engine.clone(),
+        };
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
                 app_clone,
                 stop_clone,
                 play_tx,
-                use_cloned_voice,
-                lang_worker,
+                worker_config,
                 pending_worker,
             )
         });
@@ -517,6 +453,7 @@ pub fn start(
         let stop_partials = stop.clone();
         let pending_partials = pending_finals.clone();
         let lang_partials = lang.clone();
+        let engine_partials = engine.clone();
         std::thread::spawn(move || {
             let mut last_len = 0usize;
             while !stop_partials.load(Ordering::Relaxed) {
@@ -555,44 +492,41 @@ pub fn start(
                     continue;
                 }
                 last_len = samples.len();
-                if let Ok(path) = write_segment_wav(&samples) {
-                    let decode = crate::translation::engine_server::transcribe_partial(
-                        &path,
-                        &lang_partials,
-                    );
-                    let _ = std::fs::remove_file(&path);
+                // decode_partial owns the temp-WAV write + cleanup internally
+                // (see engine::python_sidecar) — this call site only deals in
+                // samples in, text out, same as decode_and_synthesize above.
+                let decode = engine_partials.decode_partial(&samples, &lang_partials);
 
-                    // Interpreter-style fast close: arm only when the in-progress
-                    // translation reads as a complete sentence AND we captured
-                    // enough audio (2s) to trust the punctuation isn't a
-                    // mid-utterance artifact. A failed or empty decode disarms —
-                    // a stale "sentence ended" must not survive up to 10s of
-                    // decode failures while the user is mid-sentence.
-                    let arm = samples.len() >= 32_000 && decode.as_deref().is_ok_and(ends_sentence);
-                    {
-                        // The decode can take seconds; the segment we analyzed may
-                        // have closed meanwhile (normal 240ms silence), resetting
-                        // the flag and starting a new segment. Only touch the flag
-                        // if the generation is unchanged — otherwise our decision
-                        // is stale and would mis-arm a brand-new segment.
-                        let mut seg = seg_for_partials.lock().unwrap_or_else(|e| e.into_inner());
-                        if seg.generation() == gen_at_snapshot {
-                            if arm {
-                                eprintln!("live: fast-close armed (sentence end seen)");
-                            }
-                            seg.set_fast_close(arm);
+                // Interpreter-style fast close: arm only when the in-progress
+                // translation reads as a complete sentence AND we captured
+                // enough audio (2s) to trust the punctuation isn't a
+                // mid-utterance artifact. A failed or empty decode disarms —
+                // a stale "sentence ended" must not survive up to 10s of
+                // decode failures while the user is mid-sentence.
+                let arm = samples.len() >= 32_000 && decode.as_deref().is_ok_and(ends_sentence);
+                {
+                    // The decode can take seconds; the segment we analyzed may
+                    // have closed meanwhile (normal 240ms silence), resetting
+                    // the flag and starting a new segment. Only touch the flag
+                    // if the generation is unchanged — otherwise our decision
+                    // is stale and would mis-arm a brand-new segment.
+                    let mut seg = seg_for_partials.lock().unwrap_or_else(|e| e.into_inner());
+                    if seg.generation() == gen_at_snapshot {
+                        if arm {
+                            eprintln!("live: fast-close armed (sentence end seen)");
                         }
+                        seg.set_fast_close(arm);
                     }
+                }
 
-                    if let Ok(text) = decode {
-                        if !text.is_empty() {
-                            // Re-check right before emitting: the decode above can
-                            // take up to the 10s timeout, long enough for stop() to
-                            // have landed in the meantime.
-                            if !stop_partials.load(Ordering::Relaxed) {
-                                let _ = app_partials
-                                    .emit("partial", serde_json::json!({ "text": text }));
-                            }
+                if let Ok(text) = decode {
+                    if !text.is_empty() {
+                        // Re-check right before emitting: the decode above can
+                        // take up to the 10s timeout, long enough for stop() to
+                        // have landed in the meantime.
+                        if !stop_partials.load(Ordering::Relaxed) {
+                            let _ =
+                                app_partials.emit("partial", serde_json::json!({ "text": text }));
                         }
                     }
                 }
@@ -879,6 +813,7 @@ pub fn start_ptt(
     ptt_recording: Arc<AtomicBool>,
     use_cloned_voice: bool,
     lang: crate::translation::engine_server::LangPair,
+    engine: Arc<dyn TranslationEngine>,
 ) -> Result<LiveSession, String> {
     let host = cpal::default_host();
     let device = host
@@ -921,15 +856,18 @@ pub fn start_ptt(
         let app_clone = app.clone();
         let stop_clone = stop.clone();
         let pending_worker = pending_finals.clone();
-        let lang_worker = lang.clone();
+        let worker_config = WorkerConfig {
+            use_cloned_voice,
+            lang: lang.clone(),
+            engine: engine.clone(),
+        };
         std::thread::spawn(move || {
             run_worker(
                 seg_rx,
                 app_clone,
                 stop_clone,
                 play_tx,
-                use_cloned_voice,
-                lang_worker,
+                worker_config,
                 pending_worker,
             )
         });

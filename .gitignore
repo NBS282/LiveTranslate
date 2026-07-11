@@ -51,7 +51,7 @@ lerna-debug.log*
 models/
 
 # ── Runtime engine artifacts ──
-engine/
+/engine/
 voices/
 python-portable.tar.gz
 translations/
