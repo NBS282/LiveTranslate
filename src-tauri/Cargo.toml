@@ -31,3 +31,13 @@ rubato = "0.15"
 hound = "3"
 tauri-plugin-global-shortcut = "2"
 
+# CPU-only (tinyBLAS) on Windows/Linux; Metal is enabled for macOS below.
+# Vulkan/dynamic-backends are deliberately deferred — building them needs the
+# Vulkan SDK, and CPU tinyBLAS is our floor for native STT (mirrors how Handy
+# ships transcribe-cpp).
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+transcribe-cpp = { version = "0.1.2", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+transcribe-cpp = { version = "0.1.2", default-features = false, features = ["metal"] }
+
