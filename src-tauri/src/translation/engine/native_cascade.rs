@@ -47,10 +47,14 @@ impl NativeCascadeEngine {
             language: Some(lang.src.clone()),
             ..Default::default()
         };
+        // Recover a poisoned lock instead of failing every later segment: a
+        // panic mid-decode leaves no partial state we rely on (the next run()
+        // starts a fresh utterance), and the transcribe-cpp crate recovers its
+        // internal compute lock the same way.
         let mut session = self
             .session
             .lock()
-            .map_err(|_| "native STT session lock poisoned".to_string())?;
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let transcript = session.run(&pcm, &options).map_err(|e| e.to_string())?;
         Ok(transcript.text)
     }
