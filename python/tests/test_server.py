@@ -105,7 +105,7 @@ def test_warmup_failure_reports_error_and_exits():
     exits = []
 
     def fake_warmup():
-        raise RuntimeError("canary weights corrupt")
+        raise RuntimeError("parakeet weights corrupt")
 
     original = server.warmup
     server.warmup = fake_warmup
@@ -117,7 +117,7 @@ def test_warmup_failure_reports_error_and_exits():
         server.warmup = original
 
     assert exits == [1]
-    assert "canary weights corrupt" in server._warmup_state["error"]
+    assert "parakeet weights corrupt" in server._warmup_state["error"]
     assert server._warmup_state["ready"] is False
 
 
@@ -167,8 +167,7 @@ def test_translate_missing_file_400(monkeypatch):
 
 def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
-    monkeypatch.setattr(server, "speech_translate", lambda p, **kw: "Partial text")
+    monkeypatch.setattr(server, "transcribe_translate", lambda p, src, tgt: "Partial text")
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
@@ -180,14 +179,13 @@ def test_transcribe_partial_returns_text(monkeypatch, tmp_path):
 
 def test_transcribe_partial_forwards_language_pair(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
     seen = {}
 
-    def fake(p, **kw):
-        seen.update(kw)
+    def fake(p, src, tgt):
+        seen["args"] = (src, tgt)
         return "Bonjour"
 
-    monkeypatch.setattr(server, "speech_translate", fake)
+    monkeypatch.setattr(server, "transcribe_translate", fake)
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:
@@ -197,8 +195,7 @@ def test_transcribe_partial_forwards_language_pair(monkeypatch, tmp_path):
             json={"input_path": str(f), "src": "en", "tgt": "fr"},
         )
         assert r.status_code == 200
-        assert seen["source_lang"] == "en"
-        assert seen["target_lang"] == "fr"
+        assert seen["args"] == ("en", "fr")
 
 
 def test_transcribe_partial_rejects_unsupported_pair(monkeypatch, tmp_path):
@@ -242,16 +239,9 @@ def test_transcribe_partial_missing_file_400(monkeypatch):
         assert r.status_code == 400
 
 
-def test_transcribe_partial_cascade_uses_parakeet_marian(monkeypatch, tmp_path):
-    """Under the default cascade engine, partials run Parakeet -> Marian and
-    must never touch Canary (the 3.5GB model must not lazy-load)."""
+def test_transcribe_partial_uses_parakeet_marian(monkeypatch, tmp_path):
+    """Partials always run Parakeet -> Marian (the cascade path)."""
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "cascade")
-
-    def must_not_be_called(path, **kw):
-        raise AssertionError("Canary path must not be used under cascade")
-
-    monkeypatch.setattr(server, "speech_translate", must_not_be_called)
     seen = {}
 
     def fake_cascade(path, src, tgt):
@@ -369,12 +359,11 @@ def test_tts_503_while_loading(monkeypatch):
 
 def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "warmup", lambda: None)
-    monkeypatch.setattr(server, "translation_engine", lambda: "canary")
 
-    def boom(path, **kw):
+    def boom(path, src, tgt):
         raise RuntimeError("decoder exploded")
 
-    monkeypatch.setattr(server, "speech_translate", boom)
+    monkeypatch.setattr(server, "transcribe_translate", boom)
     f = tmp_path / "chunk.wav"
     f.write_bytes(b"x")
     with TestClient(server.app) as client:

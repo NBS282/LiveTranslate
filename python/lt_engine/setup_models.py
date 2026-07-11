@@ -21,8 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 # Sum of all model downloads, used to turn cache-dir growth into a rough
 # overall percentage. Precision does not matter: the bar just has to move.
 # Parakeet ~1.1 GB + six MarianMT directions ~1.8 GB + Pocket TTS ~200 MB.
-# Canary (~3.5 GB) is NOT part of setup: the cascade engine is the default,
-# and the canary engine lazy-downloads its model on first warmup instead.
+# The native Canary AST engine's GGUF model (~1 GB, see
+# src-tauri/src/models/catalog.rs) is downloaded separately by the Rust side
+# on first use of LT_TRANSLATION_ENGINE=canary, not by this setup step.
 TOTAL_DOWNLOAD_BYTES = 3_600_000_000
 
 PROGRESS_PREFIX = "PROGRESS:"
@@ -86,15 +87,6 @@ def download_parakeet() -> None:
     from huggingface_hub import snapshot_download
 
     snapshot_download("nvidia/parakeet-tdt-0.6b-v3")
-
-
-def download_canary() -> None:
-    """Not called by setup. Kept for manually pre-fetching the canary
-    engine's model (LT_TRANSLATION_ENGINE=canary lazy-downloads it
-    otherwise on first warmup)."""
-    from huggingface_hub import snapshot_download
-
-    snapshot_download("nvidia/canary-1b-flash")
 
 
 def download_pocket_tts() -> None:

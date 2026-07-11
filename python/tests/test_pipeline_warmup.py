@@ -15,7 +15,6 @@ def _patch_core_models(monkeypatch):
     monkeypatch.setattr(pipeline, "_get_asr", lambda: object())
     monkeypatch.setattr(pipeline, "_get_mt", lambda: object())
     monkeypatch.setattr(pipeline, "_get_piper", lambda: object())
-    monkeypatch.setattr(pipeline, "_get_canary", lambda: object())
     # Keep tests hermetic: never resolve a real voice profile from disk.
     monkeypatch.setattr(cloned_tts, "warmup_cloned", lambda: None)
 
@@ -45,8 +44,9 @@ def test_warmup_marks_cloning_available_on_success(monkeypatch):
 
 
 def test_warmup_propagates_core_model_failure(monkeypatch):
-    """A core model failure (Canary/Piper) must still abort warmup: the Rust
-    side relies on the process dying fast instead of hanging until timeout."""
+    """A core model failure (Parakeet/Piper) must still abort warmup: the
+    Rust side relies on the process dying fast instead of hanging until
+    timeout."""
     _patch_core_models(monkeypatch)
     monkeypatch.setattr(cloned_tts, "warmup_engine", lambda: None)
 
@@ -97,8 +97,6 @@ def test_warmup_sequential_fallback_loads_everything(monkeypatch):
     for low-RAM machines); every model must still load."""
     monkeypatch.setenv("LT_WARMUP_PARALLEL", "0")
     calls = []
-    monkeypatch.setattr(pipeline, "translation_engine", lambda: "canary")
-    monkeypatch.setattr(pipeline, "_get_canary", lambda: calls.append("canary"))
     monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
     monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
     monkeypatch.setattr(pipeline, "_get_piper", lambda: calls.append("piper"))
@@ -107,14 +105,12 @@ def test_warmup_sequential_fallback_loads_everything(monkeypatch):
 
     pipeline.warmup()
 
-    assert "canary" in calls and "piper" in calls and "pocket" in calls
-    assert "asr" not in calls and "mt" not in calls
+    assert "asr" in calls and "mt" in calls and "piper" in calls and "pocket" in calls
 
 
 def test_translate_audio_falls_back_to_piper_when_cloning_unavailable(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(pipeline, "translation_engine", lambda: "legacy")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola mundo")
     monkeypatch.setattr(pipeline, "translate", lambda t, *a, **k: "hello world")
     used = {}

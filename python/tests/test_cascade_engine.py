@@ -1,7 +1,9 @@
 """Cascade engine (Parakeet ASR -> MarianMT text translation) routing.
 
-The cascade is now the DEFAULT engine; Canary AST remains available via
-LT_TRANSLATION_ENGINE=canary for quality comparison. Models are mocked.
+Cascade is the only translation pipeline in this module: the Canary AST path
+was removed in favor of a native `transcribe_cpp` GGUF engine on the Rust
+side (see `src-tauri/src/translation/engine/native_canary.rs`). Models are
+mocked here.
 """
 import threading
 import time
@@ -10,11 +12,6 @@ from types import SimpleNamespace
 import pytest
 
 import lt_engine.pipeline as pipeline
-
-
-def test_default_engine_is_cascade(monkeypatch):
-    monkeypatch.delenv("LT_TRANSLATION_ENGINE", raising=False)
-    assert pipeline.translation_engine() == "cascade"
 
 
 def test_marian_map_covers_all_supported_pairs():
@@ -85,7 +82,6 @@ def test_transcribe_translate_rejects_unsupported_pair():
 
 
 def test_translate_audio_cascade_forwards_pair(monkeypatch, tmp_path):
-    monkeypatch.setattr(pipeline, "translation_engine", lambda: "cascade")
     monkeypatch.setattr(pipeline, "transcribe", lambda p: "hola")
     seen = {}
 

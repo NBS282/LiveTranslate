@@ -9,7 +9,6 @@ import lt_engine.setup_models as sm
 
 
 def _patch_downloads(monkeypatch, calls):
-    monkeypatch.setattr(sm, "download_canary", lambda: calls.append("canary"))
     monkeypatch.setattr(sm, "download_parakeet", lambda: calls.append("parakeet"))
     monkeypatch.setattr(sm, "download_marian", lambda: calls.append("marian"))
     monkeypatch.setattr(sm, "download_pocket_tts", lambda: calls.append("pocket"))
@@ -19,9 +18,6 @@ def _patch_downloads(monkeypatch, calls):
     monkeypatch.setattr(sm, "_patch_windows_symlinks", lambda: None)
 
 
-# Canary is deliberately absent: the cascade engine is the default and the
-# 3.5 GB model would double the first-run download. Selecting the canary
-# engine later lazy-downloads it on that first warmup instead.
 _ALL_EXPECTED = {
     "parakeet",
     "marian",
@@ -32,15 +28,6 @@ _ALL_EXPECTED = {
     "marian-de-en",
     "marian-en-de",
 }
-
-
-def test_setup_does_not_download_canary(monkeypatch):
-    calls = []
-    _patch_downloads(monkeypatch, calls)
-
-    sm.download_all(max_workers=2)
-
-    assert "canary" not in calls
 
 
 def test_download_all_downloads_every_model(monkeypatch):
