@@ -333,6 +333,43 @@ def synthesize(text: str, out_wav: str) -> None:
         voice.synthesize_wav(text, wf)
 
 
+def synthesize_reply(text: str, out_dir: str, use_cloned_voice: bool = False) -> str:
+    """Synthesize the reply audio for already-translated `text`.
+
+    This is the exact piper/pocket-tts routing `translate_audio` runs after
+    translation: cloned voice when requested and available, falling back to
+    Piper on any cloning failure so a voice hiccup only costs quality, never
+    the reply itself. Extracted so `/tts` (native-STT composition) and
+    `translate_audio` (Python-sidecar composition) share one code path.
+
+    Args:
+        text: Already-translated text to speak.
+        out_dir: Directory the output WAV is written into (created if missing).
+        use_cloned_voice: If True and a voice profile exists, use Chatterbox
+            Turbo instead of Piper for synthesis.
+
+    Returns:
+        Path to the written `output.wav`.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    out_wav = os.path.join(out_dir, "output.wav")
+
+    if use_cloned_voice and _cloning_available:
+        from .cloned_tts import synthesize_cloned
+        try:
+            synthesize_cloned(text, out_wav)
+        except Exception:
+            # A cloned-voice hiccup (e.g. voice state still being exported)
+            # must cost one phrase's voice quality, never the translation.
+            import traceback
+            traceback.print_exc()
+            synthesize(text, out_wav)
+    else:
+        synthesize(text, out_wav)
+
+    return out_wav
+
+
 def _load_core_models() -> None:
     """Load the active translation engine's models (fatal on failure).
 
@@ -445,22 +482,8 @@ def translate_audio(
         if not source_text.strip():
             raise ValueError("transcription produced no text")
         translated_text = translate(source_text, src, tgt)
-    out_wav = os.path.join(out_dir, "output.wav")
 
-    # Fall back to Piper when cloning was requested but the engine is not
-    # available — translation must keep working even if cloning is degraded.
-    if use_cloned_voice and _cloning_available:
-        from .cloned_tts import synthesize_cloned
-        try:
-            synthesize_cloned(translated_text, out_wav)
-        except Exception:
-            # A cloned-voice hiccup (e.g. voice state still being exported)
-            # must cost one phrase's voice quality, never the translation.
-            import traceback
-            traceback.print_exc()
-            synthesize(translated_text, out_wav)
-    else:
-        synthesize(translated_text, out_wav)
+    out_wav = synthesize_reply(translated_text, out_dir, use_cloned_voice)
 
     return {
         "output_wav": out_wav,

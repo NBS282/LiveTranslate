@@ -1,6 +1,7 @@
 """Persistent FastAPI translation server. Loads models once at startup. Binds 127.0.0.1 only."""
 import os
 import sys
+import tempfile
 import threading
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,9 @@ from .pipeline import (
     cloning_available,
     cloning_error,
     speech_translate,
+    synthesize_reply,
     transcribe_translate,
+    translate,
     translate_audio,
     translation_engine,
     validate_language_pair,
@@ -80,6 +83,18 @@ class PartialRequest(BaseModel):
     tgt: str = "en"
 
 
+class MtRequest(BaseModel):
+    text: str
+    src: str = "es"
+    tgt: str = "en"
+
+
+class TtsRequest(BaseModel):
+    text: str
+    use_cloned_voice: bool = False
+    tgt_lang: str = "en"
+
+
 def _validate_pair_or_400(src: str, tgt: str) -> None:
     try:
         validate_language_pair(src, tgt)
@@ -144,6 +159,42 @@ def transcribe_partial(req: PartialRequest) -> dict:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"partial decode failed: {e}")
+
+
+@app.post("/mt")
+def do_mt(req: MtRequest) -> dict:
+    """Text-only MarianMT translation — the same step `translate_audio` runs
+    between ASR and TTS, exposed standalone for callers that supply their own
+    transcript (e.g. the native transcribe.cpp STT cascade)."""
+    _require_ready()
+    _validate_pair_or_400(req.src, req.tgt)
+    try:
+        return {"translated_text": translate(req.text, req.src, req.tgt)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"translation failed: {e}")
+
+
+@app.post("/tts")
+def do_tts(req: TtsRequest) -> dict:
+    """Synthesize already-translated text — the same piper/pocket-tts tail
+    `translate_audio` runs after translation, exposed standalone for callers
+    that supply their own translated text (e.g. the native STT cascade).
+
+    `tgt_lang` is accepted for parity with the request shape but, like
+    `translate_audio` today, is not used to pick a TTS voice: synthesis is
+    always Piper (English) or the user's cloned voice.
+    """
+    _require_ready()
+    out_dir = tempfile.mkdtemp(prefix="lt_tts_")
+    try:
+        output_wav = synthesize_reply(req.text, out_dir, req.use_cloned_voice)
+        return {"output_wav": output_wav}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"synthesis failed: {e}")
 
 
 @app.get("/voice-profile")
