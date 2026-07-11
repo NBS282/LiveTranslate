@@ -42,3 +42,43 @@ jobs:
 
       - name: ruff check
         run: pipx run ruff check python/
+
+  rust-windows:
+    name: Rust · Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build (release)
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Test (release)
+        working-directory: src-tauri
+        run: cargo test --release
+
+  rust-macos:
+    name: Rust · macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build (release)
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Test (release)
+        working-directory: src-tauri
+        run: cargo test --release
