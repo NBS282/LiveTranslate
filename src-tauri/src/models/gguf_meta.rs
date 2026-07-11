@@ -91,16 +91,34 @@ fn read_u64<R: Read>(r: &mut R) -> std::io::Result<u64> {
     Ok(u64::from_le_bytes(buf))
 }
 
+/// Upper bound for any single metadata string; a corrupt header must not be
+/// able to trigger an arbitrarily large allocation from an 8-byte length field.
+const MAX_STRING_LEN: u64 = 1 << 20; // 1 MiB
+
 fn read_gguf_string<R: Read>(r: &mut R) -> std::io::Result<String> {
     let len = read_u64(r)?;
+    if len > MAX_STRING_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("gguf string length {len} exceeds {MAX_STRING_LEN}"),
+        ));
+    }
     let mut buf = vec![0u8; len as usize];
     r.read_exact(&mut buf)?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 fn skip_bytes<R: Read>(r: &mut R, n: usize) -> std::io::Result<()> {
-    let mut buf = vec![0u8; n];
-    r.read_exact(&mut buf)
+    // Stream instead of allocating `n` bytes: `n` comes from the (untrusted)
+    // file header and may be huge on a corrupt file.
+    let copied = std::io::copy(&mut r.take(n as u64), &mut std::io::sink())?;
+    if copied < n as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "truncated gguf metadata",
+        ));
+    }
+    Ok(())
 }
 
 /// Reads just enough of a GGUF file's header and metadata key-value section to
