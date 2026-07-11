@@ -11,12 +11,10 @@ from pydantic import BaseModel
 from .pipeline import (
     cloning_available,
     cloning_error,
-    speech_translate,
     synthesize_reply,
     transcribe_translate,
     translate,
     translate_audio,
-    translation_engine,
     validate_language_pair,
     warmup,
     warmup_progress,
@@ -142,18 +140,7 @@ def transcribe_partial(req: PartialRequest) -> dict:
     if not os.path.isfile(req.input_path):
         raise HTTPException(status_code=400, detail=f"input not found: {req.input_path}")
     try:
-        if translation_engine() == "canary":
-            return {
-                "text": speech_translate(
-                    req.input_path,
-                    allow_bisect=False,
-                    source_lang=req.src,
-                    target_lang=req.tgt,
-                )
-            }
-        # Cascade partial: Parakeet transcript -> Marian translation. Never
-        # touches Canary, so the 3.5GB model is not lazy-loaded under the
-        # cascade engine.
+        # Cascade partial: Parakeet transcript -> Marian translation.
         return {"text": transcribe_translate(req.input_path, req.src, req.tgt)}
     except Exception as e:
         import traceback

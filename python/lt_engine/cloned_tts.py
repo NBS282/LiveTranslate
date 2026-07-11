@@ -29,8 +29,8 @@ def _import_pocket_tts():
     """Import pocket_tts without letting it throttle the process.
 
     pocket_tts calls torch.set_num_threads(1) at import time, which would
-    degrade every other model in this process (Canary/Parakeet decode gets
-    ~3x slower). Save and restore the thread count around the import.
+    degrade every other model in this process (Parakeet decode gets ~3x
+    slower). Save and restore the thread count around the import.
     """
     import torch
 
