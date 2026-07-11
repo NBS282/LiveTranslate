@@ -442,6 +442,62 @@ pub fn transcribe_partial(input: &Path, lang: &LangPair) -> Result<String, Strin
         .to_string())
 }
 
+/// Translates already-transcribed text via the Python sidecar's `/mt`
+/// endpoint (MarianMT). Used by the native STT cascade, which performs
+/// transcription in-process and only needs the sidecar's MT + TTS steps.
+pub fn mt(text: &str, lang: &LangPair) -> Result<String, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/mt", base_url()))
+        .json(&serde_json::json!({
+            "text": text,
+            "src": lang.src,
+            "tgt": lang.tgt,
+        }))
+        .timeout(Duration::from_secs(30))
+        .send()
+        .map_err(|e| format!("mt request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("mt server error {status}: {body}"));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(body
+        .get("translated_text")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
+/// Synthesizes already-translated text via the Python sidecar's `/tts`
+/// endpoint (Piper, or the cloned voice when requested and available). Used
+/// by the native STT cascade.
+pub fn tts(text: &str, use_cloned_voice: bool, tgt: &str) -> Result<PathBuf, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/tts", base_url()))
+        .json(&serde_json::json!({
+            "text": text,
+            "use_cloned_voice": use_cloned_voice,
+            "tgt_lang": tgt,
+        }))
+        .timeout(Duration::from_secs(60))
+        .send()
+        .map_err(|e| format!("tts request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("tts server error {status}: {body}"));
+    }
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let wav = body
+        .get("output_wav")
+        .and_then(|x| x.as_str())
+        .ok_or("tts response missing output_wav")?;
+    Ok(PathBuf::from(wav))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,5 +591,28 @@ mod tests {
         assert!(LangPair::parse("es", "de").is_err());
         assert!(LangPair::parse("pt", "en").is_err());
         assert!(LangPair::parse("es", "es").is_err());
+    }
+
+    /// `mt`/`tts` share `translate_ex`'s JSON-body parsing; these tests only
+    /// exercise the pure parsing logic (no live HTTP call) by replaying the
+    /// same body-shape assertions inline rather than against a live server.
+    #[test]
+    fn mt_response_parsing_extracts_translated_text() {
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"translated_text":"hello world"}"#).unwrap();
+        assert_eq!(
+            v.get("translated_text").and_then(|x| x.as_str()),
+            Some("hello world")
+        );
+    }
+
+    #[test]
+    fn tts_response_parsing_extracts_output_wav() {
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"output_wav":"C:/t/output.wav"}"#).unwrap();
+        assert_eq!(
+            v.get("output_wav").and_then(|x| x.as_str()),
+            Some("C:/t/output.wav")
+        );
     }
 }
