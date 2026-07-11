@@ -9,7 +9,9 @@
 
 use std::sync::Mutex;
 
-use crate::translation::engine::{Decoded, DecodedWithAudio, TranslationEngine};
+use crate::translation::engine::{
+    i16_samples_to_f32, Decoded, DecodedWithAudio, TranslationEngine,
+};
 use crate::translation::engine_server::{self, LangPair};
 
 /// Same "nothing to show" signal the Python sidecar uses (see
@@ -99,37 +101,9 @@ impl TranslationEngine for NativeCascadeEngine {
     }
 }
 
-/// Converts 16-bit PCM samples to the `[-1, 1]` float range `transcribe_cpp`
-/// expects.
-fn i16_samples_to_f32(samples: &[i16]) -> Vec<f32> {
-    samples.iter().map(|&s| s as f32 / 32768.0).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn i16_samples_to_f32_converts_zero() {
-        assert_eq!(i16_samples_to_f32(&[0]), vec![0.0]);
-    }
-
-    #[test]
-    fn i16_samples_to_f32_converts_full_scale_extremes() {
-        let out = i16_samples_to_f32(&[i16::MAX, i16::MIN]);
-        assert!((out[0] - (32767.0 / 32768.0)).abs() < 1e-6);
-        assert_eq!(out[1], -1.0);
-    }
-
-    #[test]
-    fn i16_samples_to_f32_preserves_length_and_order() {
-        let samples: Vec<i16> = vec![0, 100, -100, 200, -200];
-        let out = i16_samples_to_f32(&samples);
-        assert_eq!(out.len(), samples.len());
-        assert!(out[1] > 0.0);
-        assert!(out[2] < 0.0);
-        assert!(out[3] > out[1]);
-    }
 
     #[test]
     fn no_speech_error_matches_the_string_live_rs_checks_for() {
