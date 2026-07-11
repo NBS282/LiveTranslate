@@ -30,6 +30,7 @@ webrtc-vad = "0.4"
 rubato = "0.15"
 hound = "3"
 tauri-plugin-global-shortcut = "2"
+sha2 = "0.10"
 
 # CPU-only (tinyBLAS) on Windows/Linux; Metal is enabled for macOS below.
 # Vulkan/dynamic-backends are deliberately deferred — building them needs the

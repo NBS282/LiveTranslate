@@ -1,4 +1,6 @@
 mod audio;
+pub mod models;
+mod net;
 mod setup;
 mod state;
 mod translation;
@@ -383,6 +385,122 @@ fn register_ptt_shortcut(
     Ok(())
 }
 
+/// Minimal linear-interpolation resampler, duplicated from
+/// `translation::live`'s private `SimpleResampler`: that struct isn't part of
+/// `live`'s public surface, and widening it just for this debug-only command
+/// isn't worth it. Keep in sync if the live path's resampling logic changes.
+#[cfg(debug_assertions)]
+struct DevResampler {
+    ratio: f32,
+    pos: f32,
+    last: f32,
+}
+
+#[cfg(debug_assertions)]
+impl DevResampler {
+    fn new(from_rate: usize, to_rate: usize) -> Self {
+        Self {
+            ratio: from_rate as f32 / to_rate as f32,
+            pos: 0.0,
+            last: 0.0,
+        }
+    }
+
+    fn process(&mut self, input: &[f32]) -> Vec<f32> {
+        let mut out = Vec::new();
+        for &x in input {
+            while self.pos <= 1.0 {
+                out.push(self.last + (x - self.last) * self.pos);
+                self.pos += self.ratio;
+            }
+            self.pos -= 1.0;
+            self.last = x;
+        }
+        out
+    }
+}
+
+/// Reads a WAV file and returns 16 kHz mono f32 samples in [-1, 1], downmixing
+/// and resampling as needed. Debug-only helper for `dev_native_transcribe`.
+#[cfg(debug_assertions)]
+fn dev_load_wav_as_16k_mono_f32(path: &std::path::Path) -> Result<Vec<f32>, String> {
+    let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+
+    let samples_f32: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+        hound::SampleFormat::Int => {
+            let max = (1i64 << (spec.bits_per_sample.saturating_sub(1))) as f32;
+            reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| s as f32 / max)
+                .collect()
+        }
+    };
+
+    let channels = spec.channels as usize;
+    let mono: Vec<f32> = if channels <= 1 {
+        samples_f32
+    } else {
+        samples_f32
+            .chunks(channels)
+            .map(|c| c.iter().sum::<f32>() / c.len() as f32)
+            .collect()
+    };
+
+    let from_rate = spec.sample_rate as usize;
+    if from_rate == 16_000 {
+        return Ok(mono);
+    }
+    let mut resampler = DevResampler::new(from_rate, 16_000);
+    Ok(resampler.process(&mono))
+}
+
+/// Dev-only smoke test for the native GGUF STT path: downloads (if needed),
+/// verifies, and loads `model_id` from the catalog, then transcribes/translates
+/// `wav_path` with `src_lang` as the language hint. Not wired into the live
+/// translation pipeline yet — that's Phase 3.
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn dev_native_transcribe(
+    model_id: String,
+    wav_path: String,
+    src_lang: String,
+) -> Result<String, String> {
+    let entry = models::catalog::find(&model_id)
+        .ok_or_else(|| format!("unknown model id: {model_id}"))?;
+
+    let manager = models::manager::ModelManager::new(translation::sidecar::repo_root());
+
+    if !manager.is_downloaded(entry) {
+        manager.download(entry, |downloaded, total| {
+            eprintln!("dev_native_transcribe: downloading {model_id} {downloaded}/{total} bytes");
+        })?;
+    }
+
+    let model = manager.load(entry)?;
+    let mut session = model.session().map_err(|e| e.to_string())?;
+
+    let pcm = dev_load_wav_as_16k_mono_f32(std::path::Path::new(&wav_path))?;
+
+    let options = transcribe_cpp::RunOptions {
+        task: match entry.task {
+            models::catalog::Task::Ast => transcribe_cpp::Task::Translate,
+            models::catalog::Task::Asr => transcribe_cpp::Task::Transcribe,
+        },
+        language: if src_lang.is_empty() {
+            None
+        } else {
+            Some(src_lang)
+        },
+        ..Default::default()
+    };
+
+    let transcript = session.run(&pcm, &options).map_err(|e| e.to_string())?;
+    Ok(transcript.text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -498,24 +616,56 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            get_output_devices,
-            start_passthrough,
-            stop_passthrough,
-            translate_file,
-            start_live_translation,
-            stop_live_translation,
-            start_live_translation_ptt,
-            register_ptt_shortcut,
-            check_setup,
-            start_setup,
-            warm_engine,
-            check_vbcable,
-            download_piper_voice,
-            get_voice_profile_status,
-            upload_voice_profile,
-            delete_voice_profile,
-        ])
+        .invoke_handler({
+            // `dev_native_transcribe` only compiles in debug builds; register
+            // it there and fall back to the standard list in release so
+            // `generate_handler!` never references a function that doesn't exist.
+            // Boxed as a trait object so both branches share one concrete,
+            // nameable type — required for `let` to infer the macro's
+            // otherwise-opaque generated closure type.
+            type BoxedHandler = Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync>;
+
+            #[cfg(debug_assertions)]
+            let handler: BoxedHandler = Box::new(tauri::generate_handler![
+                get_output_devices,
+                start_passthrough,
+                stop_passthrough,
+                translate_file,
+                start_live_translation,
+                stop_live_translation,
+                start_live_translation_ptt,
+                register_ptt_shortcut,
+                check_setup,
+                start_setup,
+                warm_engine,
+                check_vbcable,
+                download_piper_voice,
+                get_voice_profile_status,
+                upload_voice_profile,
+                delete_voice_profile,
+                dev_native_transcribe,
+            ]);
+            #[cfg(not(debug_assertions))]
+            let handler: BoxedHandler = Box::new(tauri::generate_handler![
+                get_output_devices,
+                start_passthrough,
+                stop_passthrough,
+                translate_file,
+                start_live_translation,
+                stop_live_translation,
+                start_live_translation_ptt,
+                register_ptt_shortcut,
+                check_setup,
+                start_setup,
+                warm_engine,
+                check_vbcable,
+                download_piper_voice,
+                get_voice_profile_status,
+                upload_voice_profile,
+                delete_voice_profile,
+            ]);
+            handler
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
