@@ -221,12 +221,14 @@ async fn start_live_translation(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         ensure_server_running(&app, &state)?;
+        let engine = translation::engine::build();
         let session = translation::live::start(
             &device_name,
             &output_device_name,
             app.clone(),
             use_cloned_voice,
             lang,
+            engine,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
@@ -341,6 +343,7 @@ async fn start_live_translation_ptt(
             .ptt_recording
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let ptt_rec = state.ptt_recording.clone();
+        let engine = translation::engine::build();
         let session = translation::live::start_ptt(
             &device_name,
             &output_device_name,
@@ -348,6 +351,7 @@ async fn start_live_translation_ptt(
             ptt_rec,
             use_cloned_voice,
             lang,
+            engine,
         )?;
         *state.live.lock().map_err(|e| e.to_string())? = Some(session);
         Ok::<(), String>(())
