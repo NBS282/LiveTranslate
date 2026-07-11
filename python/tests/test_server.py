@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 
@@ -268,6 +269,102 @@ def test_transcribe_partial_cascade_uses_parakeet_marian(monkeypatch, tmp_path):
         assert r.status_code == 200
         assert r.json() == {"text": "Partial text"}
         assert seen["args"] == ("en", "fr")
+
+
+def test_mt_calls_translate(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    captured = {}
+
+    def fake(text, src, tgt):
+        captured.update(text=text, src=src, tgt=tgt)
+        return "hello world"
+
+    monkeypatch.setattr(server, "translate", fake)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/mt", json={"text": "hola mundo", "src": "es", "tgt": "en"})
+        assert r.status_code == 200
+        assert r.json() == {"translated_text": "hello world"}
+        assert captured == {"text": "hola mundo", "src": "es", "tgt": "en"}
+
+
+def test_mt_rejects_unsupported_pair(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/mt", json={"text": "hola", "src": "es", "tgt": "de"})
+        assert r.status_code == 400
+        assert "unsupported language pair" in r.json()["detail"]
+
+
+def test_mt_model_failure_500(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+
+    def boom(text, src, tgt):
+        raise RuntimeError("marian exploded")
+
+    monkeypatch.setattr(server, "translate", boom)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/mt", json={"text": "hola"})
+        assert r.status_code == 500
+        assert "marian exploded" in r.json()["detail"]
+
+
+def test_mt_503_while_loading(monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    try:
+        with TestClient(server.app) as client:
+            r = client.post("/mt", json={"text": "hola"})
+            assert r.status_code == 503
+    finally:
+        release.set()
+
+
+def test_tts_calls_synthesize_reply(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    captured = {}
+
+    def fake(text, out_dir, use_cloned_voice):
+        captured.update(text=text, out_dir=out_dir, use_cloned_voice=use_cloned_voice)
+        return os.path.join(out_dir, "output.wav")
+
+    monkeypatch.setattr(server, "synthesize_reply", fake)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post(
+            "/tts", json={"text": "hello world", "use_cloned_voice": True, "tgt_lang": "en"}
+        )
+        assert r.status_code == 200
+        assert r.json()["output_wav"].endswith("output.wav")
+        assert captured["text"] == "hello world"
+        assert captured["use_cloned_voice"] is True
+
+
+def test_tts_synthesis_failure_500(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+
+    def boom(text, out_dir, use_cloned_voice):
+        raise RuntimeError("piper exploded")
+
+    monkeypatch.setattr(server, "synthesize_reply", boom)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/tts", json={"text": "hello world"})
+        assert r.status_code == 500
+        assert "piper exploded" in r.json()["detail"]
+
+
+def test_tts_503_while_loading(monkeypatch):
+    release = threading.Event()
+    monkeypatch.setattr(server, "warmup", lambda: release.wait(5))
+    try:
+        with TestClient(server.app) as client:
+            r = client.post("/tts", json={"text": "hello"})
+            assert r.status_code == 503
+    finally:
+        release.set()
 
 
 def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):

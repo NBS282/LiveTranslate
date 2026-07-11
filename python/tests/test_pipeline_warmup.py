@@ -128,3 +128,59 @@ def test_translate_audio_falls_back_to_piper_when_cloning_unavailable(
     pipeline.translate_audio("in.wav", str(tmp_path), use_cloned_voice=True)
 
     assert used["engine"] == "piper"
+
+
+def test_synthesize_reply_uses_piper_by_default(monkeypatch, tmp_path):
+    used = {}
+    monkeypatch.setattr(
+        pipeline, "synthesize", lambda text, out_wav: used.update(text=text, out_wav=out_wav)
+    )
+
+    out_dir = tmp_path / "reply"
+    result = pipeline.synthesize_reply("hello world", str(out_dir))
+
+    assert result == str(out_dir / "output.wav")
+    assert used == {"text": "hello world", "out_wav": str(out_dir / "output.wav")}
+
+
+def test_synthesize_reply_uses_cloned_voice_when_available(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "_cloning_available", True)
+    used = {}
+    monkeypatch.setattr(
+        cloned_tts,
+        "synthesize_cloned",
+        lambda text, out_wav: used.update(text=text, out_wav=out_wav),
+    )
+
+    out_dir = tmp_path / "reply"
+    result = pipeline.synthesize_reply("hello world", str(out_dir), use_cloned_voice=True)
+
+    assert result == str(out_dir / "output.wav")
+    assert used == {"text": "hello world", "out_wav": str(out_dir / "output.wav")}
+
+
+def test_synthesize_reply_falls_back_to_piper_on_cloning_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "_cloning_available", True)
+
+    def boom(text, out_wav):
+        raise RuntimeError("voice state load failed")
+
+    monkeypatch.setattr(cloned_tts, "synthesize_cloned", boom)
+    used = {}
+    monkeypatch.setattr(
+        pipeline, "synthesize", lambda text, out_wav: used.update(engine="piper")
+    )
+
+    result = pipeline.synthesize_reply("hello world", str(tmp_path), use_cloned_voice=True)
+
+    assert used["engine"] == "piper"
+    assert result == str(tmp_path / "output.wav")
+
+
+def test_synthesize_reply_creates_out_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, "synthesize", lambda text, out_wav: None)
+    out_dir = tmp_path / "nested" / "reply"
+
+    pipeline.synthesize_reply("hello world", str(out_dir))
+
+    assert out_dir.is_dir()
