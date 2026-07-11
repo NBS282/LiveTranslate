@@ -1,0 +1,17 @@
+[package]
+name = "gguf-stt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone spike crate — intentionally NOT part of the src-tauri workspace.
+# Validates transcribe.cpp GGUF inference (Parakeet ASR + Canary AST) before
+# any product integration. CPU-only build to avoid Vulkan SDK requirements.
+
+[dependencies]
+transcribe-cpp = { version = "0.1.2", default-features = false }
+hound = "3"
+memory-stats = "1"
+
+[profile.release]
+debug = false
