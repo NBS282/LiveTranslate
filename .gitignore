@@ -49,6 +49,9 @@ lerna-debug.log*
 *.gguf
 *.bin
 models/
+# Exception: this is Rust source (native GGUF catalog/manager), not a
+# downloaded-weights cache — the pattern above would otherwise swallow it.
+!src-tauri/src/models/
 
 # ── Runtime engine artifacts ──
 /engine/
