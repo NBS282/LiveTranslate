@@ -9,7 +9,6 @@ import lt_engine.setup_models as sm
 
 
 def _patch_downloads(monkeypatch, calls):
-    monkeypatch.setattr(sm, "download_parakeet", lambda: calls.append("parakeet"))
     monkeypatch.setattr(sm, "download_marian", lambda: calls.append("marian"))
     monkeypatch.setattr(sm, "download_pocket_tts", lambda: calls.append("pocket"))
     monkeypatch.setattr(
@@ -19,7 +18,6 @@ def _patch_downloads(monkeypatch, calls):
 
 
 _ALL_EXPECTED = {
-    "parakeet",
     "marian",
     "pocket",
     "marian-en-es",
@@ -66,7 +64,7 @@ def test_optional_marian_pair_failure_does_not_abort(monkeypatch):
 
     sm.download_all(max_workers=2)  # must not raise
 
-    assert {"parakeet", "marian", "pocket"} <= set(calls)
+    assert {"marian", "pocket"} <= set(calls)
 
 
 def test_required_model_failure_raises_after_all_settle(monkeypatch):
@@ -76,13 +74,13 @@ def test_required_model_failure_raises_after_all_settle(monkeypatch):
     def boom():
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(sm, "download_parakeet", boom)
+    monkeypatch.setattr(sm, "download_marian", boom)
 
-    with pytest.raises(RuntimeError, match="Parakeet"):
+    with pytest.raises(RuntimeError, match="MarianMT"):
         sm.download_all(max_workers=2)
 
-    # The other downloads still ran — a partial cache shortens the retry.
-    assert "marian" in calls
+    # The other (optional) downloads still ran — a partial cache shortens the retry.
+    assert "pocket" in calls
 
 
 def test_main_returns_nonzero_on_required_failure(monkeypatch):
@@ -92,7 +90,7 @@ def test_main_returns_nonzero_on_required_failure(monkeypatch):
     def boom():
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(sm, "download_parakeet", boom)
+    monkeypatch.setattr(sm, "download_marian", boom)
 
     assert sm.main() == 1
 
