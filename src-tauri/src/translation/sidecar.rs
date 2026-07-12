@@ -48,25 +48,43 @@ pub fn repo_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Relative path, under `<repo_root>/engine/python/`, of the production
+/// portable Python interpreter for the given `std::env::consts::OS`-style
+/// tag ("windows", "macos", ...).
+///
+/// Pure function (no filesystem access) so both branches are exercised by
+/// unit tests regardless of which OS actually runs them — a typo here would
+/// otherwise only surface on the other platform's CI job.
+///
+/// - Windows: `python-build-standalone`'s `install_only` archive is renamed
+///   to `livetranslate-engine.exe` by `setup::download_portable_python` so
+///   Task Manager shows the app name instead of "python.exe".
+/// - Everything else (macOS today; matches python-build-standalone's Unix
+///   `install_only` layout): the interpreter lives at `bin/python3`, a
+///   symlink to the pinned `python3.NN` binary. No renaming applies there.
+pub fn production_python_rel_path(os: &str) -> PathBuf {
+    if os == "windows" {
+        PathBuf::from("livetranslate-engine.exe")
+    } else {
+        PathBuf::from("bin").join("python3")
+    }
+}
+
 /// Python interpreter used by the engine. Override with LT_ENGINE_PYTHON.
 ///
 /// Resolution order:
 ///   1. LT_ENGINE_PYTHON env var (manual override)
-///   2. engine/python/livetranslate-engine.exe  (production portable runtime)
-///   3. .venv-engine/Scripts/python.exe          (dev venv fallback)
+///   2. engine/python/<production_python_rel_path>  (production portable runtime)
+///   3. .venv-engine/Scripts|bin/python[.exe]        (dev venv fallback)
 pub fn engine_python() -> String {
     if let Ok(p) = std::env::var("LT_ENGINE_PYTHON") {
         return p;
     }
-    // Production: portable Python-build-standalone, copied as a named exe.
+    // Production: portable Python-build-standalone runtime downloaded by setup.
     let prod_exe = repo_root()
         .join("engine")
         .join("python")
-        .join(if cfg!(windows) {
-            "livetranslate-engine.exe"
-        } else {
-            "python3"
-        });
+        .join(production_python_rel_path(std::env::consts::OS));
     if prod_exe.exists() {
         return prod_exe.to_string_lossy().into_owned();
     }
@@ -92,6 +110,33 @@ pub fn translate_file(input: &Path) -> Result<TranslationOutput, String> {
 #[cfg(test)]
 mod json_tests {
     use super::*;
+
+    #[test]
+    fn production_python_rel_path_windows_is_renamed_exe() {
+        assert_eq!(
+            production_python_rel_path("windows"),
+            PathBuf::from("livetranslate-engine.exe")
+        );
+    }
+
+    #[test]
+    fn production_python_rel_path_macos_is_bin_python3() {
+        assert_eq!(
+            production_python_rel_path("macos"),
+            PathBuf::from("bin").join("python3")
+        );
+    }
+
+    #[test]
+    fn production_python_rel_path_defaults_to_unix_layout() {
+        // Anything that isn't "windows" follows python-build-standalone's
+        // Unix `install_only` layout (bin/python3) — covers macOS today and
+        // keeps the fallback sane if Linux is ever supported.
+        assert_eq!(
+            production_python_rel_path("linux"),
+            PathBuf::from("bin").join("python3")
+        );
+    }
 
     #[test]
     fn parses_both_texts() {
