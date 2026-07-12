@@ -6,10 +6,16 @@
   yet (setup downloads an `aarch64-apple-darwin` portable Python runtime;
   there is no Intel build path).
 - **Unsigned build.** macOS Gatekeeper will block the first launch with an
-  "unidentified developer" warning. To open it anyway:
-  1. Right-click (or Control-click) `LiveTranslate.app` → **Open**.
-  2. Click **Open** again in the dialog that appears.
-  3. This is only needed once — subsequent launches work normally.
+  "unidentified developer" warning. To open it anyway on macOS 15 (Sequoia)
+  and later — the Control-click bypass was removed there:
+  1. Double-click `LiveTranslate.app` once and dismiss the warning dialog.
+  2. Open **System Settings → Privacy & Security**, scroll to the
+     **Security** section, and click **Open Anyway** next to LiveTranslate.
+  3. Confirm **Open** in the final dialog.
+
+  On macOS 14 (Sonoma) and earlier, right-click (or Control-click) the app →
+  **Open** → **Open** still works. Either way this is only needed once —
+  subsequent launches work normally.
 
 ## First-run permissions
 
