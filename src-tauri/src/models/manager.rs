@@ -114,6 +114,12 @@ impl ModelManager {
             ));
         }
 
+        self.check_architecture(entry)
+    }
+
+    /// Validates the GGUF header's `general.architecture` against the entry.
+    fn check_architecture(&self, entry: &ModelEntry) -> Result<(), String> {
+        let path = self.path_for(entry);
         match gguf_meta::read_architecture(&path) {
             Ok(Some(arch)) if arch == entry.arch => Ok(()),
             Ok(Some(arch)) => Err(format!(
@@ -131,9 +137,25 @@ impl ModelManager {
         }
     }
 
-    /// Verifies the downloaded file, then loads it into a `transcribe_cpp::Model`.
+    /// Cheap pre-load validation: size matches the catalog and the GGUF
+    /// header declares the expected architecture. Full sha256 integrity is
+    /// `verify`'s job and runs once right after download — re-hashing the
+    /// multi-hundred-MB file on every session start would add seconds of
+    /// pure disk+CPU latency to the Start button.
+    pub fn quick_check(&self, entry: &ModelEntry) -> Result<(), String> {
+        if !self.is_downloaded(entry) {
+            return Err(format!(
+                "model file missing or size mismatch: {}",
+                self.path_for(entry).display()
+            ));
+        }
+        self.check_architecture(entry)
+    }
+
+    /// Quick-checks the downloaded file, then loads it into a
+    /// `transcribe_cpp::Model` (see `quick_check` for why not full `verify`).
     pub fn load(&self, entry: &ModelEntry) -> Result<transcribe_cpp::Model, String> {
-        self.verify(entry)?;
+        self.quick_check(entry)?;
         transcribe_cpp::Model::load(self.path_for(entry)).map_err(|e| e.to_string())
     }
 }
@@ -216,6 +238,32 @@ mod tests {
         let result = manager.verify(&TEST_ENTRY);
         let err = result.expect_err("hash mismatch must be rejected");
         assert!(err.contains("sha256 mismatch"), "unexpected error: {err}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn quick_check_fails_when_file_missing_or_size_mismatch() {
+        let (manager, root) = manager_in("quick_check_missing");
+
+        let err = manager
+            .quick_check(&TEST_ENTRY)
+            .expect_err("missing file must be rejected");
+        assert!(
+            err.contains("missing or size mismatch"),
+            "unexpected error: {err}"
+        );
+
+        let path = manager.path_for(&TEST_ENTRY);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"wrong-size-content").unwrap();
+        let err = manager
+            .quick_check(&TEST_ENTRY)
+            .expect_err("size mismatch must be rejected");
+        assert!(
+            err.contains("missing or size mismatch"),
+            "unexpected error: {err}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }

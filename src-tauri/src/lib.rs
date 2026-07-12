@@ -224,7 +224,7 @@ async fn start_live_translation(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         ensure_server_running(&app, &state)?;
-        let engine = translation::engine::build(&app);
+        let engine = translation::engine::get_or_build(&app);
         let session = translation::live::start(
             &device_name,
             &output_device_name,
@@ -261,32 +261,43 @@ fn start_setup(app: tauri::AppHandle) {
 }
 
 /// Spawns the engine server in the background (non-blocking) so models load while
-/// the user finishes onboarding. By the time they click "Start", warmup is done.
-/// Safe to call repeatedly: it no-ops if the server is already up or starting.
+/// the user finishes onboarding, then pre-builds the translation engine (native
+/// GGUF load) once the server is ready. By the time they click "Start", both are
+/// warm and the session starts instantly. Safe to call repeatedly: the server
+/// spawn no-ops if already up, and `get_or_build` returns the cached engine.
 #[tauri::command]
-fn warm_engine(state: tauri::State<AppState>) {
-    if translation::engine_server::is_server_up() {
-        return;
-    }
+fn warm_engine(app: tauri::AppHandle, state: tauri::State<AppState>) {
     if !setup::check().ready {
         return;
     }
-    let mut guard = match state.server.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-    let needs_spawn = match guard.as_mut() {
-        None => true,
-        Some(child) => matches!(child.try_wait(), Ok(Some(_))),
-    };
-    if needs_spawn {
-        match translation::engine_server::spawn_server() {
-            Ok(child) => {
-                *guard = Some(child);
+    if !translation::engine_server::is_server_up() {
+        let mut guard = match state.server.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        let needs_spawn = match guard.as_mut() {
+            None => true,
+            Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+        };
+        if needs_spawn {
+            match translation::engine_server::spawn_server() {
+                Ok(child) => {
+                    *guard = Some(child);
+                }
+                Err(e) => eprintln!("warm_engine: could not spawn server: {e}"),
             }
-            Err(e) => eprintln!("warm_engine: could not spawn server: {e}"),
         }
     }
+    // Pre-build the engine off the UI thread: waits for sidecar readiness,
+    // then loads the GGUF model into the cache so Start doesn't pay for it.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if let Err(e) = ensure_server_running(&app, &state) {
+            eprintln!("warm_engine: engine prewarm skipped: {e}");
+            return;
+        }
+        let _ = translation::engine::get_or_build(&app);
+    });
 }
 
 #[tauri::command]
@@ -346,7 +357,7 @@ async fn start_live_translation_ptt(
             .ptt_recording
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let ptt_rec = state.ptt_recording.clone();
-        let engine = translation::engine::build(&app);
+        let engine = translation::engine::get_or_build(&app);
         let session = translation::live::start_ptt(
             &device_name,
             &output_device_name,
