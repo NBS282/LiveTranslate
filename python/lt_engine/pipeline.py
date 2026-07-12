@@ -113,6 +113,22 @@ def _get_asr():
     return _asr
 
 
+def ensure_asr_loaded() -> None:
+    """Load the NeMo ASR model now (blocking, possibly minutes cold).
+
+    Called by the Rust side right after it falls back from native STT to this
+    sidecar: under the native-default warmup the ASR was deliberately never
+    warmed, and letting the first /translate request absorb the cold load
+    would blow its 120s client timeout. Serialized under _decode_lock so a
+    concurrent decode cannot double-load.
+
+    Raises:
+        RuntimeError: when nemo_toolkit is not installed (fresh installs).
+    """
+    with _decode_lock:
+        _get_asr()
+
+
 # One MarianMT model per translation direction, matching the same six pairs
 # the native Canary AST engine supports so both accept the same UI selector.
 _MARIAN_MODELS = {

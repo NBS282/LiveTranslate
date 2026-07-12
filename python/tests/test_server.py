@@ -371,3 +371,33 @@ def test_transcribe_partial_decode_failure_500(monkeypatch, tmp_path):
         r = client.post("/transcribe-partial", json={"input_path": str(f)})
         assert r.status_code == 500
         assert "decoder exploded" in r.json()["detail"]
+
+
+def test_warm_asr_calls_ensure_asr_loaded(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+    called = {"n": 0}
+
+    def fake():
+        called["n"] += 1
+
+    monkeypatch.setattr(server, "ensure_asr_loaded", fake)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/warm-asr")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
+        assert called["n"] == 1
+
+
+def test_warm_asr_failure_500(monkeypatch):
+    monkeypatch.setattr(server, "warmup", lambda: None)
+
+    def boom():
+        raise RuntimeError("nemo_toolkit missing")
+
+    monkeypatch.setattr(server, "ensure_asr_loaded", boom)
+    with TestClient(server.app) as client:
+        _wait_ready(client)
+        r = client.post("/warm-asr")
+        assert r.status_code == 500
+        assert "nemo_toolkit missing" in r.json()["detail"]

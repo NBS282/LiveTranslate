@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from .pipeline import (
     cloning_available,
     cloning_error,
+    ensure_asr_loaded,
     synthesize_reply,
     transcribe_translate,
     translate,
@@ -146,6 +147,23 @@ def transcribe_partial(req: PartialRequest) -> dict:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"partial decode failed: {e}")
+
+
+@app.post("/warm-asr")
+def do_warm_asr() -> dict:
+    """Eagerly load the NeMo ASR fallback model (blocking; minutes when cold).
+
+    The Rust side calls this with a long timeout when it falls back from
+    native STT to this sidecar, so the first real /translate request does not
+    absorb the cold load and trip its own shorter timeout."""
+    _require_ready()
+    try:
+        ensure_asr_loaded()
+        return {"status": "ok"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"asr warmup failed: {e}")
 
 
 @app.post("/mt")

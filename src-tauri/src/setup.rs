@@ -346,11 +346,17 @@ pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    // This step owns the [89, 90] slice of the overall setup bar (the caller
+    // emits 89 before invoking us); scale byte progress into it instead of
+    // emitting a raw 0-100 that would visibly jump the bar backwards.
+    const PCT_START: u8 = 89;
+    const PCT_END: u8 = 90;
+
     let step = "Downloading native STT model";
     emit_progress(
         app,
         step,
-        0,
+        PCT_START,
         &format!("{model_id} ({:.0} MB)…", mb(entry.size_bytes)),
     );
 
@@ -361,11 +367,11 @@ pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
             .checked_mul(100)
             .and_then(|d| d.checked_div(total))
         {
-            let pct = ratio.min(100) as u8;
+            let inner = ratio.min(100) as u8;
             emit_progress(
                 &app_progress,
                 &step_progress,
-                pct,
+                scale_progress(PCT_START, PCT_END, inner),
                 &format!("{:.1} / {:.1} MB", mb(downloaded), mb(total)),
             );
         }

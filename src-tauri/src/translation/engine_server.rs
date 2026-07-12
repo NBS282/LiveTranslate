@@ -483,6 +483,27 @@ pub fn mt(text: &str, lang: &LangPair) -> Result<String, String> {
         .to_string())
 }
 
+/// Eagerly loads the sidecar's NeMo ASR fallback model via `/warm-asr`.
+/// Called once when the native STT path fails and we fall back to
+/// `PythonSidecarEngine`: under the native-default warmup the sidecar never
+/// warmed ASR, and the cold load (minutes) would otherwise land inside the
+/// first `/translate` call and trip its 120s timeout. Long timeout matches
+/// the startup warmup budget in `lib.rs`.
+pub fn warm_asr() -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(format!("{}/warm-asr", base_url()))
+        .timeout(Duration::from_secs(600))
+        .send()
+        .map_err(|e| format!("warm-asr request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("warm-asr server error {status}: {body}"));
+    }
+    Ok(())
+}
+
 /// Synthesizes already-translated text via the Python sidecar's `/tts`
 /// endpoint (Piper, or the cloned voice when requested and available). Used
 /// by the native STT cascade.
