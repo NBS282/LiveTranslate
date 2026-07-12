@@ -84,9 +84,11 @@ pub trait TranslationEngine: Send + Sync {
 /// spawned *before* this function runs (at app startup / `warm_engine`),
 /// so a native failure discovered here falls back to `PythonSidecarEngine`
 /// for a sidecar that was already told "native" and therefore skipped its
-/// eager NeMo ASR warmup. That fallback session still works: `pipeline.py`
-/// lazy-loads NeMo ASR on the first request in that case, just slower for
-/// that one segment.
+/// eager NeMo ASR warmup. Every fallback branch below therefore calls
+/// `engine_server::warm_asr()` (blocking, long timeout — we run inside
+/// `spawn_blocking` at session start) so the cold NeMo load happens here,
+/// not inside the first `/translate` call where it would trip that
+/// client's 120s timeout.
 pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
     if translation_engine_choice() == "canary" {
         return match build_native_canary(app) {
@@ -95,6 +97,7 @@ pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
                 eprintln!(
                     "engine: native Canary AST engine unavailable ({e}), falling back to Python sidecar (cascade pipeline — Canary is not available there)"
                 );
+                warm_python_asr_for_fallback();
                 Arc::new(python_sidecar::PythonSidecarEngine)
             }
         };
@@ -107,10 +110,22 @@ pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
                 eprintln!(
                     "engine: native STT backend unavailable ({e}), falling back to Python sidecar"
                 );
+                warm_python_asr_for_fallback();
             }
         }
     }
     Arc::new(python_sidecar::PythonSidecarEngine)
+}
+
+/// Blocking best-effort warm of the sidecar's NeMo ASR before a fallback
+/// session starts (see `build`'s doc comment). A failure here (e.g. fresh
+/// install without nemo_toolkit) is only logged — the session proceeds and
+/// each request then surfaces the same clear error to the UI.
+fn warm_python_asr_for_fallback() {
+    eprintln!("engine: warming python ASR fallback (cold NeMo load can take minutes)…");
+    if let Err(e) = crate::translation::engine_server::warm_asr() {
+        eprintln!("engine: python ASR fallback warmup failed: {e}");
+    }
 }
 
 /// Raw `LT_TRANSLATION_ENGINE` value, defaulting to `"cascade"` for anything
