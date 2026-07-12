@@ -197,22 +197,39 @@ document.getElementById("setup-details-toggle")!.addEventListener("click", () =>
   document.getElementById("setup-details-toggle")!.textContent = hidden ? "Ver detalles" : "Ocultar detalles";
 });
 
-// ── Onboarding step 1: VB-Cable ──────────────────────────────────────────────
+// ── Onboarding step 1: virtual audio device (VB-Cable / BlackHole) ───────────
 
 const btnRecheck = document.getElementById("btn-ob-cable-check") as HTMLButtonElement;
+
+// Windows defaults; swapped for macOS once the platform is known.
+let virtualCable = { name: "VB-Cable", url: "https://vb-audio.com/Cable/" };
+
+const platformReady: Promise<void> = (async () => {
+  try {
+    const os = await invoke<string>("get_platform");
+    if (os === "macos") {
+      virtualCable = { name: "BlackHole", url: "https://existential.audio/blackhole/" };
+      document.getElementById("ob-cable-name")!.textContent = virtualCable.name;
+      document.getElementById("ob-cable-dl-label")!.textContent = `Descargar ${virtualCable.name}.`;
+    }
+  } catch {
+    // Unknown platform: keep the Windows copy.
+  }
+})();
 
 async function checkVBCable(): Promise<void> {
   btnRecheck.disabled = true;
   btnRecheck.textContent = "Verificando…";
 
   try {
+    await platformReady;
     const found = await invoke<boolean>("check_vbcable");
     if (found) {
-      setStatusBadge("ob-cable-status", "ok", "VB-Cable detectado");
+      setStatusBadge("ob-cable-status", "ok", `${virtualCable.name} detectado`);
       document.getElementById("ob-cable-install")!.classList.add("hidden");
       document.getElementById("btn-ob-next-1")!.classList.remove("hidden");
     } else {
-      setStatusBadge("ob-cable-status", "err", "No encontrado — instalá VB-Cable y volvé a verificar");
+      setStatusBadge("ob-cable-status", "err", `No encontrado — instalá ${virtualCable.name} y volvé a verificar`);
       document.getElementById("ob-cable-install")!.classList.remove("hidden");
       document.getElementById("btn-ob-next-1")!.classList.add("hidden");
     }
@@ -227,7 +244,7 @@ async function checkVBCable(): Promise<void> {
 btnRecheck.addEventListener("click", () => void checkVBCable());
 
 document.getElementById("ob-cable-install")!.addEventListener("click", () => {
-  void openUrl("https://vb-audio.com/Cable/");
+  void openUrl(virtualCable.url);
 });
 
 document.getElementById("btn-ob-next-1")!.addEventListener("click", () => {
