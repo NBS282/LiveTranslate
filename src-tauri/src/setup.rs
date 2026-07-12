@@ -26,14 +26,19 @@ fn engine_dir() -> PathBuf {
         .join("python")
 }
 
-/// The renamed Python interpreter shown in Task Manager as "livetranslate-engine".
-fn engine_exe() -> PathBuf {
-    engine_dir().join("livetranslate-engine.exe")
+/// The production portable Python interpreter: `livetranslate-engine.exe` on
+/// Windows (renamed + rebranded, see `rebrand_engine_exe`), `bin/python3` on
+/// macOS (python-build-standalone's Unix `install_only` layout, unmodified).
+/// See `sidecar::production_python_rel_path` for the OS selection logic.
+fn production_python_path() -> PathBuf {
+    engine_dir().join(crate::translation::sidecar::production_python_rel_path(
+        std::env::consts::OS,
+    ))
 }
 
 /// Active Python interpreter: portable runtime (production) or venv (dev).
 fn venv_python() -> PathBuf {
-    let prod = engine_exe();
+    let prod = production_python_path();
     if prod.exists() {
         return prod;
     }
@@ -168,13 +173,57 @@ fn mb(bytes: u64) -> f64 {
 
 // ── Portable Python (production only) ────────────────────────────────────────
 
-/// Downloads python-build-standalone, extracts it, and creates livetranslate-engine.exe.
-/// Uses Windows' built-in tar.exe (available since Windows 10 v1803).
+/// Builds the `pip install torch ...` argument list for the given
+/// `std::env::consts::OS`-style tag. Pure function so both branches are
+/// tested regardless of host OS.
+///
+/// Windows (and Linux, were it ever supported) need the `+cpu` wheel index —
+/// PyPI's default `torch` wheel there pulls a multi-GB CUDA dependency tree
+/// we don't want. macOS has no CUDA wheel variant to begin with: PyPI's
+/// default `torch` wheel for macOS is already the arm64 build (CPU +
+/// Accelerate/MPS), so overriding the index would be a no-op at best and a
+/// broken URL at worst (`download.pytorch.org/whl/cpu` doesn't publish
+/// macOS wheels).
+fn torch_install_args(os: &str) -> Vec<&'static str> {
+    let mut args = vec!["install", "torch"];
+    if os != "macos" {
+        args.extend(["--index-url", "https://download.pytorch.org/whl/cpu"]);
+    }
+    args
+}
+
+/// Resolves the python-build-standalone `install_only` tarball URL for the
+/// given `std::env::consts::OS`-style tag. Pure function (no I/O) so the URL
+/// for a platform we're not currently running on is still covered by tests —
+/// a typo in the macOS URL would otherwise only be discovered by the user's
+/// Mac, not by Windows-side CI.
+///
+/// Only Windows (x86_64) and macOS (aarch64 / Apple Silicon) are supported —
+/// this is a beta scoped to Apple Silicon Macs; Intel Macs are out of scope
+/// (see docs/MACOS.md).
+fn python_build_standalone_url(os: &str) -> Result<&'static str, String> {
+    match os {
+        "windows" => Ok(concat!(
+            "https://github.com/astral-sh/python-build-standalone/releases/download/",
+            "20250409/cpython-3.11.12+20250409-x86_64-pc-windows-msvc-install_only.tar.gz"
+        )),
+        "macos" => Ok(concat!(
+            "https://github.com/astral-sh/python-build-standalone/releases/download/",
+            "20250409/cpython-3.11.12+20250409-aarch64-apple-darwin-install_only.tar.gz"
+        )),
+        other => Err(format!(
+            "no portable Python runtime is available for target OS '{other}' \
+             (LiveTranslate's portable-runtime setup only supports Windows x86_64 \
+             and macOS aarch64/Apple Silicon)"
+        )),
+    }
+}
+
+/// Downloads python-build-standalone and extracts it into `engine/python/`.
+/// Uses the platform's built-in `tar` (Windows 10 v1803+ ships one; macOS's
+/// BSD `tar` handles `.tar.gz` natively) — no bundled extraction tool needed.
 fn download_portable_python(app: &AppHandle) -> Result<(), String> {
-    const URL: &str = concat!(
-        "https://github.com/astral-sh/python-build-standalone/releases/download/",
-        "20250409/cpython-3.11.12+20250409-x86_64-pc-windows-msvc-install_only.tar.gz"
-    );
+    let url = python_build_standalone_url(std::env::consts::OS)?;
 
     let root = crate::translation::sidecar::repo_root();
     let engine_root = root.join("engine");
@@ -182,10 +231,10 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
 
     let archive = engine_root.join("python-portable.tar.gz");
 
-    // Download (~30 MB).
-    download_file(app, URL, &archive, "Downloading Python runtime")?;
+    // Download (~20-30 MB depending on platform).
+    download_file(app, url, &archive, "Downloading Python runtime")?;
 
-    // Extract with Windows built-in tar (Win 10 v1803+).
+    // Extract with the OS's built-in tar.
     emit_progress(app, "Extracting Python runtime", 5, "");
     let mut tar_cmd = std::process::Command::new("tar");
     tar_cmd.args([
@@ -201,7 +250,7 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
     }
     let out = tar_cmd
         .output()
-        .map_err(|e| format!("tar not found (requires Windows 10 v1803+): {e}"))?;
+        .map_err(|e| format!("tar not found (requires Windows 10 v1803+ or macOS): {e}"))?;
 
     if !out.status.success() {
         return Err(format!(
@@ -210,12 +259,22 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
         ));
     }
 
-    // Clean up archive to save ~30 MB.
+    // Clean up archive to save space.
     let _ = std::fs::remove_file(&archive);
 
+    finalize_portable_python(app)?;
+
+    Ok(())
+}
+
+/// Windows: renames `python.exe` → `livetranslate-engine.exe` (so Task
+/// Manager shows the app name), rebrands its PE resources, then bootstraps
+/// pip (the `install_only` Windows tarball ships without it).
+#[cfg(windows)]
+fn finalize_portable_python(app: &AppHandle) -> Result<PathBuf, String> {
     // Copy python.exe → livetranslate-engine.exe so Task Manager shows the app name.
     let python_exe = engine_dir().join("python.exe");
-    let lt_exe = engine_exe();
+    let lt_exe = production_python_path();
     if python_exe.exists() && !lt_exe.exists() {
         std::fs::copy(&python_exe, &lt_exe)
             .map_err(|e| format!("failed to create livetranslate-engine.exe: {e}"))?;
@@ -228,23 +287,42 @@ fn download_portable_python(app: &AppHandle) -> Result<(), String> {
         rebrand_engine_exe(app, &lt_exe);
     }
 
-    // Bootstrap pip (not included in install_only variant).
+    bootstrap_pip(app, &lt_exe)?;
+    Ok(lt_exe)
+}
+
+/// macOS: python-build-standalone's Unix `install_only` layout already
+/// places a ready-to-use interpreter at `bin/python3` (a symlink to the
+/// pinned `python3.NN` binary) with pip pre-installed — no renaming or PE
+/// rebranding applies outside Windows, so this is just a passthrough plus a
+/// pip bootstrap for defense in depth (ensurepip is a local, no-network
+/// operation, so it's cheap even though pip is already present).
+#[cfg(not(windows))]
+fn finalize_portable_python(app: &AppHandle) -> Result<PathBuf, String> {
+    let python3 = production_python_path();
+    bootstrap_pip(app, &python3)?;
+    Ok(python3)
+}
+
+/// Ensures `pip` is importable for `python`. Local/offline (no network call) —
+/// `ensurepip --upgrade` only reinstalls the wheel bundled with the
+/// interpreter, it does not fetch anything from PyPI.
+fn bootstrap_pip(app: &AppHandle, python: &std::path::Path) -> Result<(), String> {
     emit_progress(app, "Bootstrapping pip", 8, "");
-    let mut pip_bootstrap = std::process::Command::new(&lt_exe);
-    pip_bootstrap.args(["-m", "ensurepip", "--upgrade"]);
+    let mut cmd = std::process::Command::new(python);
+    cmd.args(["-m", "ensurepip", "--upgrade"]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        pip_bootstrap.creation_flags(0x08000000);
+        cmd.creation_flags(0x08000000);
     }
-    let bootstrap = pip_bootstrap.output().map_err(|e| e.to_string())?;
-    if !bootstrap.status.success() {
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
         return Err(format!(
             "ensurepip failed: {}",
-            String::from_utf8_lossy(&bootstrap.stderr)
+            String::from_utf8_lossy(&out.stderr)
         ));
     }
-
     Ok(())
 }
 
@@ -400,7 +478,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     let python = venv_python();
 
     // ── Step 0 (production): portable Python runtime ──────────────────────────
-    if is_production() && !engine_exe().exists() {
+    if is_production() && !production_python_path().exists() {
         emit_progress(app, "Downloading Python runtime", 3, "~30 MB…");
         download_portable_python(app)?;
     }
@@ -487,12 +565,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     run_pip(
         app,
         &python,
-        &[
-            "install",
-            "torch",
-            "--index-url",
-            "https://download.pytorch.org/whl/cpu",
-        ],
+        &torch_install_args(std::env::consts::OS),
         15,
         50,
     )?;
@@ -826,6 +899,55 @@ fn run_python_module(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn python_build_standalone_url_windows_targets_msvc_triple() {
+        let url = python_build_standalone_url("windows").unwrap();
+        assert!(url.contains("x86_64-pc-windows-msvc-install_only.tar.gz"));
+    }
+
+    #[test]
+    fn python_build_standalone_url_macos_targets_apple_silicon() {
+        let url = python_build_standalone_url("macos").unwrap();
+        assert!(url.contains("aarch64-apple-darwin-install_only.tar.gz"));
+    }
+
+    #[test]
+    fn python_build_standalone_url_rejects_unsupported_os() {
+        assert!(python_build_standalone_url("linux").is_err());
+        assert!(python_build_standalone_url("ios").is_err());
+    }
+
+    #[test]
+    fn python_build_standalone_urls_share_the_same_pinned_release() {
+        // Windows and macOS must stay on the same CPython version — a
+        // divergent pin here would only surface as behavior drift discovered
+        // during the user's Mac UAT, not in CI.
+        let windows = python_build_standalone_url("windows").unwrap();
+        let macos = python_build_standalone_url("macos").unwrap();
+        assert!(windows.contains("cpython-3.11.12+20250409-"));
+        assert!(macos.contains("cpython-3.11.12+20250409-"));
+    }
+
+    #[test]
+    fn torch_install_args_windows_uses_cpu_wheel_index() {
+        let args = torch_install_args("windows");
+        assert_eq!(
+            args,
+            vec![
+                "install",
+                "torch",
+                "--index-url",
+                "https://download.pytorch.org/whl/cpu"
+            ]
+        );
+    }
+
+    #[test]
+    fn torch_install_args_macos_uses_default_pypi_index() {
+        let args = torch_install_args("macos");
+        assert_eq!(args, vec!["install", "torch"]);
+    }
 
     #[test]
     fn needs_download_when_local_missing() {
