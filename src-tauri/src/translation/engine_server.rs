@@ -161,6 +161,15 @@ pub fn is_server_up() -> bool {
 /// Spawns the FastAPI server as a child process.
 /// Kills any leftover process on the port first so we always start fresh.
 /// Stderr is piped and relayed to eprintln! so Python tracebacks appear in the dev console.
+///
+/// Sets `LT_STT_BACKEND` on the child to `engine::resolved_stt_backend()` —
+/// the same resolution `engine::build` uses — so `pipeline.py`'s `warmup()`
+/// knows whether to skip its eager NeMo Parakeet ASR load. This is spawned
+/// well before `engine::build` runs (at app startup and `warm_engine`), so a
+/// native failure discovered later by `engine::build` falls back to
+/// `PythonSidecarEngine` against a sidecar that already skipped ASR warmup —
+/// that fallback still works, just lazy-loading NeMo ASR on the first
+/// request instead of at startup (see `engine::build`'s doc comment).
 pub fn spawn_server() -> Result<Child, String> {
     kill_process_on_port();
     let program = crate::translation::sidecar::engine_python();
@@ -193,6 +202,10 @@ pub fn spawn_server() -> Result<Child, String> {
         .env("TRANSFORMERS_CACHE", &hf_cache)
         .env("NEMO_CACHE_DIR", &nemo_cache)
         .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        .env(
+            "LT_STT_BACKEND",
+            crate::translation::engine::resolved_stt_backend(),
+        )
         .stderr(Stdio::piped());
 
     // Only pass HF_TOKEN when a non-empty one was baked in at build time.

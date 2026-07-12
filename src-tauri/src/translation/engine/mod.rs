@@ -69,13 +69,24 @@ pub trait TranslationEngine: Send + Sync {
 /// that sidecar only ever runs the cascade pipeline, so a Canary failure
 /// degrades to cascade rather than retrying the native cascade engine.
 ///
-/// Otherwise reads `LT_STT_BACKEND` ("python" default | "native"). "native" is
-/// experimental and opt-in: it resolves a GGUF Parakeet model via
-/// `ModelManager` (downloading it on first use), loads it, and composes it
-/// with the Python sidecar's `/mt` and `/tts` endpoints via
-/// `NativeCascadeEngine`. Any failure along that path (unknown model id,
-/// download, verify, load, session) is logged and this falls back to
-/// `PythonSidecarEngine` — the setting must never break the app.
+/// Otherwise reads `LT_STT_BACKEND` ("native" default | "python"). "native"
+/// resolves a GGUF Parakeet model via `ModelManager` (downloading it on
+/// first use), loads it, and composes it with the Python sidecar's `/mt`
+/// and `/tts` endpoints via `NativeCascadeEngine`. Any failure along that
+/// path (unknown model id, download, verify, load, session) is logged and
+/// this falls back to `PythonSidecarEngine` — the setting must never break
+/// the app. "python" is the explicit opt-out, for machines that already
+/// have `nemo_toolkit` installed and want the legacy cascade pipeline.
+///
+/// Note: `engine_server::spawn_server` sets `LT_STT_BACKEND` on the Python
+/// sidecar's environment to this same resolved value (see
+/// `resolved_stt_backend`) so both processes agree — but the sidecar is
+/// spawned *before* this function runs (at app startup / `warm_engine`),
+/// so a native failure discovered here falls back to `PythonSidecarEngine`
+/// for a sidecar that was already told "native" and therefore skipped its
+/// eager NeMo ASR warmup. That fallback session still works: `pipeline.py`
+/// lazy-loads NeMo ASR on the first request in that case, just slower for
+/// that one segment.
 pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
     if translation_engine_choice() == "canary" {
         return match build_native_canary(app) {
@@ -89,7 +100,7 @@ pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
         };
     }
 
-    if backend_choice() == "native" {
+    if backend_choice() != "python" {
         match build_native(app) {
             Ok(engine) => return engine,
             Err(e) => {
@@ -145,15 +156,31 @@ fn build_native_canary(app: &tauri::AppHandle) -> Result<Arc<dyn TranslationEngi
     Ok(Arc::new(engine))
 }
 
-/// Raw `LT_STT_BACKEND` value, defaulting to `"python"` for anything unset or
-/// unrecognized (including typos) — only the exact value `"native"` opts in.
+/// Raw `LT_STT_BACKEND` value, defaulting to `"native"` for anything unset or
+/// unrecognized (including typos) — only the exact value `"python"` opts out
+/// back to the Python sidecar's NeMo Parakeet ASR path.
+///
+/// `pub(crate)` so `engine_server::spawn_server` can propagate this exact
+/// resolution onto the Python sidecar's environment — see `resolved_stt_backend`.
 fn backend_choice() -> String {
-    std::env::var("LT_STT_BACKEND").unwrap_or_else(|_| "python".to_string())
+    std::env::var("LT_STT_BACKEND").unwrap_or_else(|_| "native".to_string())
+}
+
+/// Resolved `LT_STT_BACKEND` choice, shared with `engine_server::spawn_server`
+/// so the Rust engine selection and the Python sidecar's warmup both agree on
+/// whether native STT is primary — without either side duplicating the env
+/// lookup or its default.
+pub(crate) fn resolved_stt_backend() -> String {
+    backend_choice()
 }
 
 /// Raw `LT_NATIVE_STT_MODEL` value, defaulting to the Q8 Parakeet catalog id.
 /// Pure env lookup, split out so it's testable without a `tauri::AppHandle`.
-fn resolve_native_model_id() -> String {
+///
+/// `pub(crate)` so `setup::download_native_stt_model` resolves the exact
+/// same catalog id this module downloads on-demand — one source of truth
+/// for "which model id is the native STT default".
+pub(crate) fn resolve_native_model_id() -> String {
     std::env::var("LT_NATIVE_STT_MODEL").unwrap_or_else(|_| DEFAULT_NATIVE_STT_MODEL.to_string())
 }
 
@@ -199,41 +226,57 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn backend_choice_defaults_to_python_when_unset() {
+    fn backend_choice_defaults_to_native_when_unset() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: serialized by ENV_LOCK above; no other test in this file
         // reads LT_STT_BACKEND without holding the same lock.
         unsafe {
             std::env::remove_var("LT_STT_BACKEND");
         }
-        assert_eq!(backend_choice(), "python");
+        assert_eq!(backend_choice(), "native");
     }
 
     #[test]
-    fn backend_choice_is_native_only_on_exact_match() {
+    fn backend_choice_is_python_only_on_exact_match() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            std::env::set_var("LT_STT_BACKEND", "native");
+            std::env::set_var("LT_STT_BACKEND", "python");
         }
-        assert_eq!(backend_choice(), "native");
+        assert_eq!(backend_choice(), "python");
         unsafe {
             std::env::remove_var("LT_STT_BACKEND");
         }
     }
 
     #[test]
-    fn backend_choice_falls_through_to_python_on_bogus_value() {
+    fn backend_choice_falls_through_to_native_on_bogus_value() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             std::env::set_var("LT_STT_BACKEND", "not-a-real-backend");
         }
-        // `build` only special-cases the exact string "native"; a bogus
-        // value must behave exactly like "unset" (fall through to Python)
-        // instead of erroring or attempting `build_native`.
-        assert_ne!(backend_choice(), "native");
+        // `build` only special-cases the exact string "python" as an
+        // opt-out; a bogus value must behave exactly like "unset" (native)
+        // instead of erroring or opting out of `build_native`.
+        assert_ne!(backend_choice(), "python");
         unsafe {
             std::env::remove_var("LT_STT_BACKEND");
         }
+    }
+
+    #[test]
+    fn resolved_stt_backend_matches_backend_choice() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("LT_STT_BACKEND", "python");
+        }
+        // `engine_server::spawn_server` propagates this exact value onto the
+        // Python sidecar's environment — pin that it never drifts from what
+        // `build` itself reads.
+        assert_eq!(resolved_stt_backend(), backend_choice());
+        unsafe {
+            std::env::remove_var("LT_STT_BACKEND");
+        }
+        assert_eq!(resolved_stt_backend(), "native");
     }
 
     #[test]

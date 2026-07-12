@@ -137,8 +137,9 @@ fn ensure_server_running(app: &tauri::AppHandle, state: &AppState) -> Result<(),
     let _ = app.emit("engine-starting", ());
 
     // Poll /health with process-liveness monitoring so a crashed Python process
-    // fails fast (instead of waiting the full timeout). NeMo loads a 1.1 GB model
-    // into RAM on first start, which can take several minutes on slow disks/CPUs.
+    // fails fast (instead of waiting the full timeout). The sidecar loads Marian
+    // MT + Piper/Pocket TTS on first start (NeMo Parakeet ASR too, but only when
+    // LT_STT_BACKEND=python), which can take several minutes on slow disks/CPUs.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
     while std::time::Instant::now() < deadline {
         // If the child process has exited, fail immediately.
