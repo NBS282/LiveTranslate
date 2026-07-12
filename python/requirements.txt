@@ -4,7 +4,9 @@ torch==2.7.0+cpu
 --index-url https://pypi.org/simple
 huggingface_hub>=0.25
 hf_xet
-nemo_toolkit[asr]
+# nemo_toolkit[asr] is intentionally NOT installed here: native transcribe.cpp
+# (GGUF Parakeet) is the default STT backend. Install nemo_toolkit[asr]
+# manually only if you need the LT_STT_BACKEND=python fallback.
 transformers
 sentencepiece
 piper-tts

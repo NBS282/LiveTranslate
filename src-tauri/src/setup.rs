@@ -322,6 +322,59 @@ pub fn download_piper_voice(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── Native STT GGUF model download ───────────────────────────────────────────
+
+/// Downloads (and verifies) the native STT backend's default GGUF model via
+/// `ModelManager`, using the same catalog id resolution `engine::build` uses
+/// (`resolve_native_model_id` — env override `LT_NATIVE_STT_MODEL`, else the
+/// Q8 Parakeet default). A no-op if the file is already present and matches
+/// the catalog's expected size.
+///
+/// This mirrors `engine::build_native`'s download step but never loads the
+/// model into memory — setup only needs the bytes on disk and verified,
+/// loading happens lazily when a live session actually starts.
+pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
+    let model_id = crate::translation::engine::resolve_native_model_id();
+    let entry = crate::models::catalog::find(&model_id)
+        .ok_or_else(|| format!("unknown native STT model id: {model_id}"))?;
+
+    let manager = crate::models::manager::ModelManager::new(
+        crate::models::manager::ModelManager::default_root(app),
+    );
+
+    if manager.is_downloaded(entry) {
+        return Ok(());
+    }
+
+    let step = "Downloading native STT model";
+    emit_progress(
+        app,
+        step,
+        0,
+        &format!("{model_id} ({:.0} MB)…", mb(entry.size_bytes)),
+    );
+
+    let app_progress = app.clone();
+    let step_progress = step.to_string();
+    manager.download(entry, move |downloaded, total| {
+        if let Some(ratio) = downloaded
+            .checked_mul(100)
+            .and_then(|d| d.checked_div(total))
+        {
+            let pct = ratio.min(100) as u8;
+            emit_progress(
+                &app_progress,
+                &step_progress,
+                pct,
+                &format!("{:.1} / {:.1} MB", mb(downloaded), mb(total)),
+            );
+        }
+    })?;
+
+    manager.verify(entry)?;
+    Ok(())
+}
+
 // ── Main setup entry point ────────────────────────────────────────────────────
 
 pub fn run_setup(app: AppHandle) {
@@ -439,18 +492,23 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     )?;
 
     // ── Step 3: install remaining engine packages ─────────────────────────────
+    // `nemo_toolkit[asr]` (NeMo Parakeet ASR) is intentionally NOT installed
+    // here anymore: native `transcribe.cpp` (GGUF Parakeet, see Step 4.5
+    // below) is the default STT backend since Phase 5, and NeMo's PyTorch +
+    // CUDA-adjacent dependency tree was the single largest install/download
+    // cost this process paid for a path that isn't the default anymore. It
+    // remains an opt-in for `LT_STT_BACKEND=python`: install it manually.
     emit_progress(
         app,
         "Installing engine packages",
         55,
-        "nemo, transformers, piper, fastapi…",
+        "transformers, piper, fastapi…",
     );
     run_pip(
         app,
         &python,
         &[
             "install",
-            "nemo_toolkit[asr]",
             "transformers",
             "sentencepiece",
             "piper-tts",
@@ -461,7 +519,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
             // fallback (WinError 1314) uses correct absolute paths internally.
             "huggingface_hub>=0.25",
             // Enables Xet chunked parallel downloads from HuggingFace Hub
-            // (significantly faster for large models like Parakeet ~1.1 GB).
+            // (helps the MarianMT + Pocket TTS downloads below).
             "hf_xet",
         ],
         55,
@@ -494,6 +552,17 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(app, "Downloading voice model", 88, "");
     download_piper_voice(app)?;
 
+    // ── Step 4.5: download native STT GGUF model ──────────────────────────────
+    // The native transcribe.cpp cascade (default STT backend since Phase 5)
+    // resolves this same model id via ModelManager on first use if it isn't
+    // already here — downloading it during setup avoids a multi-minute,
+    // progress-bar-less stall on the first live-translation attempt for
+    // fresh installs. Existing installs that already have `nemo_toolkit`
+    // (pre-Phase-5) and no GGUF yet still get it lazily on first native
+    // session, or by re-running setup.
+    emit_progress(app, "Downloading native STT model", 89, "");
+    download_native_stt_model(app)?;
+
     // ── Step 5: ensure lt_engine source is available ──────────────────────────
     // In production, lib.rs copies the bundled python/ from resources to data_dir on
     // every launch, but that copy can fail silently. We verify here — and BEFORE the
@@ -518,11 +587,14 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         }
     }
 
-    // ── Step 6: pre-cache ML models (MarianMT + Parakeet ASR + Canary AST + Pocket TTS) ───
+    // ── Step 6: pre-cache ML models (MarianMT + Pocket TTS) ────────────────────
     // Models are stored in <LT_ENGINE_ROOT>/models/hf/ so they stay with the
     // app data and are never re-downloaded on subsequent launches. The
     // orchestration lives in python/lt_engine/setup_models.py (testable with
     // pytest); it downloads two models at a time and reports PROGRESS:<pct>.
+    // Native STT/AST GGUF models are NOT downloaded here: Parakeet is handled
+    // by Step 4.5 above (`download_native_stt_model`), and Canary downloads
+    // lazily on first `LT_TRANSLATION_ENGINE=canary` session.
     let hf_cache = crate::translation::sidecar::repo_root()
         .join("models")
         .join("hf");
@@ -533,11 +605,14 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         app,
         "Downloading translation models",
         91,
-        "~3.5 GB — first-time download, please wait…",
+        "~2.0 GB — first-time download, please wait…",
     );
+    // NEMO_CACHE_DIR is no longer read by setup_models.py (Parakeet's NeMo
+    // download was removed — see download_native_stt_model above), but is
+    // still passed through: it's a harmless no-op env var, and existing
+    // installs' `nemo_toolkit` (if present) still respects it for the
+    // python STT fallback (LT_STT_BACKEND=python).
     let nemo_cache_str = hf_cache.join("nemo").to_string_lossy().into_owned();
-    // Create nemo sub-dir before the script runs so it doesn't hit a permissions
-    // error the first time it tries to write there.
     let _ = std::fs::create_dir_all(hf_cache.join("nemo"));
     let python_src_str = python_src.to_string_lossy().into_owned();
 

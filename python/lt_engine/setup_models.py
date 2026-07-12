@@ -20,11 +20,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Sum of all model downloads, used to turn cache-dir growth into a rough
 # overall percentage. Precision does not matter: the bar just has to move.
-# Parakeet ~1.1 GB + six MarianMT directions ~1.8 GB + Pocket TTS ~200 MB.
-# The native Canary AST engine's GGUF model (~1 GB, see
-# src-tauri/src/models/catalog.rs) is downloaded separately by the Rust side
-# on first use of LT_TRANSLATION_ENGINE=canary, not by this setup step.
-TOTAL_DOWNLOAD_BYTES = 3_600_000_000
+# Six MarianMT directions ~1.8 GB + Pocket TTS ~200 MB.
+#
+# NeMo Parakeet ASR (~1.1 GB) used to be downloaded here too, but the native
+# `transcribe.cpp` GGUF cascade (default STT backend since Phase 5) replaced
+# it as the primary STT path — that GGUF model (~705 MB, see
+# src-tauri/src/models/catalog.rs) is downloaded by the Rust side during
+# setup instead (src-tauri/src/setup.rs's `download_native_stt_model`), so
+# it is not counted in this Python-side total. The native Canary AST
+# engine's GGUF model (~1 GB) is downloaded separately by the Rust side on
+# first use of LT_TRANSLATION_ENGINE=canary, also not by this setup step.
+TOTAL_DOWNLOAD_BYTES = 2_000_000_000
 
 PROGRESS_PREFIX = "PROGRESS:"
 
@@ -83,12 +89,6 @@ def _download_marian_pair(pair: str) -> None:
     MarianMTModel.from_pretrained(name)
 
 
-def download_parakeet() -> None:
-    from huggingface_hub import snapshot_download
-
-    snapshot_download("nvidia/parakeet-tdt-0.6b-v3")
-
-
 def download_pocket_tts() -> None:
     from pocket_tts import TTSModel
 
@@ -101,13 +101,14 @@ def download_all(max_workers: int = 2) -> None:
     max_workers is capped low on purpose: two streams overlap enough to help
     on connections a single stream cannot saturate, without hammering the
     Hub or thrashing slow disks. A failed required model raises after all
-    downloads settle; Pocket TTS (voice cloning) is optional and only warns
-    — the app falls back to the standard Piper voice.
+    downloads settle; Pocket TTS (voice cloning) and the non-default Marian
+    pairs are optional and only warn — a missing pair simply downloads
+    lazily on the first request that selects it, and cloning falls back to
+    the standard Piper voice.
     """
     _patch_windows_symlinks()
 
     required = [
-        ("Parakeet ASR (~1.1 GB)", download_parakeet),
         ("MarianMT ES->EN (~300 MB)", download_marian),
     ]
     optional = [("Pocket TTS (~200 MB)", download_pocket_tts)] + [
