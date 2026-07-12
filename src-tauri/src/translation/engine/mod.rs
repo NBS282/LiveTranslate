@@ -89,6 +89,28 @@ pub trait TranslationEngine: Send + Sync {
 /// `spawn_blocking` at session start) so the cold NeMo load happens here,
 /// not inside the first `/translate` call where it would trip that
 /// client's 120s timeout.
+/// Returns the app-lifetime engine, building it on first use (Handy-style:
+/// load once, keep resident). The `AppState.engine` lock is held across the
+/// build on purpose — a concurrent second caller must wait rather than
+/// trigger a duplicate model download/load. Callers run on blocking threads
+/// (`spawn_blocking`), never on the UI thread.
+pub fn get_or_build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
+    use tauri::Manager;
+    let state = app.state::<crate::state::AppState>();
+    let mut guard = match state.engine.lock() {
+        Ok(g) => g,
+        // Poisoned lock (a build panicked): fall back to an uncached build
+        // so sessions keep working; the cache heals on a later clean call.
+        Err(_) => return build(app),
+    };
+    if let Some(engine) = guard.as_ref() {
+        return Arc::clone(engine);
+    }
+    let engine = build(app);
+    *guard = Some(Arc::clone(&engine));
+    engine
+}
+
 pub fn build(app: &tauri::AppHandle) -> Arc<dyn TranslationEngine> {
     if translation_engine_choice() == "canary" {
         return match build_native_canary(app) {
@@ -163,6 +185,9 @@ fn build_native_canary(app: &tauri::AppHandle) -> Result<Arc<dyn TranslationEngi
             eprintln!("engine: native Canary AST model download {downloaded}/{total} bytes");
         })?;
         eprintln!("engine: native Canary AST model '{model_id}' download complete");
+        // Full integrity check once, right after the bytes landed; later
+        // loads only run the cheap size+arch quick_check.
+        manager.verify(entry)?;
     }
 
     let model = manager.load(entry)?;
@@ -221,6 +246,9 @@ fn build_native(app: &tauri::AppHandle) -> Result<Arc<dyn TranslationEngine>, St
             eprintln!("engine: native STT model download {downloaded}/{total} bytes");
         })?;
         eprintln!("engine: native STT model '{model_id}' download complete");
+        // Full integrity check once, right after the bytes landed; later
+        // loads only run the cheap size+arch quick_check.
+        manager.verify(entry)?;
     }
 
     let model = manager.load(entry)?;

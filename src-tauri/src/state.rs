@@ -31,6 +31,11 @@ pub struct AppState {
     pub ptt_recording: Arc<AtomicBool>,
     /// The shortcut string currently registered for PTT (e.g. "ctrl+shift+space").
     pub ptt_shortcut: Mutex<Option<String>>,
+    /// Translation engine built once and kept for the app's lifetime so the
+    /// Start button doesn't pay the GGUF model load on every session (see
+    /// `translation::engine::get_or_build`). Consequence: env-var engine
+    /// selection is read once per app run.
+    pub engine: Mutex<Option<Arc<dyn crate::translation::engine::TranslationEngine>>>,
 }
 
 impl Default for AppState {
@@ -74,6 +79,7 @@ impl AppState {
             last_translation_out: Mutex::new(None),
             ptt_recording: Arc::new(AtomicBool::new(false)),
             ptt_shortcut: Mutex::new(None),
+            engine: Mutex::new(None),
         }
     }
 
