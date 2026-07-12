@@ -13,6 +13,11 @@ second engine here (LT_TRANSLATION_ENGINE=canary). It was replaced by a
 native `transcribe_cpp` GGUF engine on the Rust side (see
 `src-tauri/src/translation/engine/native_canary.rs`) and removed from this
 module; this pipeline now always runs the cascade path.
+
+STT backend: `transcribe.cpp` (native, GGUF Parakeet) is the default STT
+engine as of `engine::build` in `src-tauri/src/translation/engine/mod.rs` —
+this process only needs to load NeMo's Parakeet ASR when `LT_STT_BACKEND`
+resolves to `"python"` (the explicit opt-out). See `_stt_backend_is_native`.
 """
 from __future__ import annotations
 import os
@@ -74,6 +79,20 @@ def _piper_voice_path() -> str:
     return os.path.join(repo_root, "en_US-lessac-medium.onnx")
 
 
+def _stt_backend_is_native() -> bool:
+    """Mirrors the Rust side's `LT_STT_BACKEND` resolution (native default,
+    "python" is the only explicit opt-out — see `backend_choice` in
+    `src-tauri/src/translation/engine/mod.rs`) so this process agrees with
+    the Rust engine selection on whether NeMo Parakeet ASR needs to load.
+
+    `engine_server::spawn_server` sets this env var explicitly on this
+    process before it starts, so "unset" only happens when the server is run
+    standalone (e.g. under pytest) — defaulting to native there too keeps
+    both sides' defaults identical.
+    """
+    return os.environ.get("LT_STT_BACKEND", "native") != "python"
+
+
 def _get_asr():
     global _asr
     if _asr is None:
@@ -82,7 +101,14 @@ def _get_asr():
         hf_home = os.environ.get("HF_HOME")
         if hf_home and "NEMO_CACHE_DIR" not in os.environ:
             os.environ["NEMO_CACHE_DIR"] = os.path.join(hf_home, "nemo")
-        from nemo.collections.asr.models import ASRModel
+        try:
+            from nemo.collections.asr.models import ASRModel
+        except ImportError as e:
+            raise RuntimeError(
+                "python STT fallback requires nemo_toolkit; native STT "
+                "(transcribe.cpp) is the default. Install nemo_toolkit[asr] "
+                "manually to use LT_STT_BACKEND=python."
+            ) from e
         _asr = ASRModel.from_pretrained("nvidia/parakeet-tdt-0.6b-v3", map_location="cpu")
     return _asr
 
@@ -238,10 +264,17 @@ def synthesize_reply(text: str, out_dir: str, use_cloned_voice: bool = False) ->
 def _load_core_models() -> None:
     """Load the cascade engine's models (fatal on failure).
 
-    Warms Parakeet plus the default es->en Marian; other directions load
-    lazily on the first request that selects them.
+    Always warms the default es->en Marian; other directions load lazily on
+    the first request that selects them. Parakeet ASR is only warmed here
+    when `LT_STT_BACKEND` resolves to "python" — with native `transcribe.cpp`
+    as the default STT backend, this process doesn't pay NeMo's ASR load
+    (the whole point of the native cascade) unless it is the primary STT
+    path or the explicit fallback target. If a native session falls back to
+    this sidecar later, `_get_asr` lazy-loads on the first `/translate`
+    request instead — slower for that one segment, but functional.
     """
-    _get_asr()
+    if not _stt_backend_is_native():
+        _get_asr()
     _get_mt()
 
 

@@ -5,6 +5,8 @@ expired, the gated Pocket TTS model could not be downloaded, warmup() raised,
 and the FastAPI server never bound its port — every request then failed with
 "error sending request" (connection refused).
 """
+import sys
+
 import pytest
 
 import lt_engine.cloned_tts as cloned_tts
@@ -94,8 +96,10 @@ def test_warmup_cloned_failure_keeps_cloning_available(monkeypatch):
 
 def test_warmup_sequential_fallback_loads_everything(monkeypatch):
     """LT_WARMUP_PARALLEL=0 forces the sequential path (support escape hatch
-    for low-RAM machines); every model must still load."""
+    for low-RAM machines); every model must still load when the Python
+    sidecar is the primary STT backend (LT_STT_BACKEND=python)."""
     monkeypatch.setenv("LT_WARMUP_PARALLEL", "0")
+    monkeypatch.setenv("LT_STT_BACKEND", "python")
     calls = []
     monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
     monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
@@ -106,6 +110,67 @@ def test_warmup_sequential_fallback_loads_everything(monkeypatch):
     pipeline.warmup()
 
     assert "asr" in calls and "mt" in calls and "piper" in calls and "pocket" in calls
+
+
+def test_warmup_skips_asr_load_when_native_backend_is_default(monkeypatch):
+    """LT_STT_BACKEND unset or "native" (the default) means transcribe.cpp is
+    the primary STT path — pipeline.py must not eagerly load NeMo Parakeet,
+    since that ~4 GB RSS load is exactly what the native cascade exists to
+    eliminate (see engine::build in
+    src-tauri/src/translation/engine/mod.rs)."""
+    monkeypatch.delenv("LT_STT_BACKEND", raising=False)
+    calls = []
+    monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
+    monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
+    monkeypatch.setattr(pipeline, "_get_piper", lambda: None)
+    monkeypatch.setattr(cloned_tts, "warmup_engine", lambda: None)
+    monkeypatch.setattr(cloned_tts, "warmup_cloned", lambda: None)
+
+    pipeline.warmup()
+
+    assert "asr" not in calls
+    assert "mt" in calls
+
+
+def test_warmup_loads_asr_when_python_backend_explicit(monkeypatch):
+    """LT_STT_BACKEND=python is the explicit opt-out — the sidecar becomes
+    the primary STT path again, so Parakeet must warm eagerly like before
+    the native cascade existed."""
+    monkeypatch.setenv("LT_STT_BACKEND", "python")
+    calls = []
+    monkeypatch.setattr(pipeline, "_get_asr", lambda: calls.append("asr"))
+    monkeypatch.setattr(pipeline, "_get_mt", lambda: calls.append("mt"))
+    monkeypatch.setattr(pipeline, "_get_piper", lambda: None)
+    monkeypatch.setattr(cloned_tts, "warmup_engine", lambda: None)
+    monkeypatch.setattr(cloned_tts, "warmup_cloned", lambda: None)
+
+    pipeline.warmup()
+
+    assert "asr" in calls
+    assert "mt" in calls
+
+
+def test_stt_backend_is_native_defaults_true_when_unset(monkeypatch):
+    monkeypatch.delenv("LT_STT_BACKEND", raising=False)
+    assert pipeline._stt_backend_is_native() is True
+
+
+def test_stt_backend_is_native_false_only_on_exact_python(monkeypatch):
+    monkeypatch.setenv("LT_STT_BACKEND", "python")
+    assert pipeline._stt_backend_is_native() is False
+    monkeypatch.setenv("LT_STT_BACKEND", "not-a-real-backend")
+    assert pipeline._stt_backend_is_native() is True
+
+
+def test_get_asr_raises_clear_error_when_nemo_unavailable(monkeypatch):
+    """When nemo_toolkit isn't installed (fresh installs no longer install
+    it — see python setup packages), the python STT fallback must fail with
+    a clear, actionable error instead of a bare ImportError."""
+    monkeypatch.setattr(pipeline, "_asr", None)
+    monkeypatch.setitem(sys.modules, "nemo.collections.asr.models", None)
+
+    with pytest.raises(RuntimeError, match="nemo_toolkit"):
+        pipeline._get_asr()
 
 
 def test_translate_audio_falls_back_to_piper_when_cloning_unavailable(

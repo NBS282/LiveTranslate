@@ -137,9 +137,12 @@ listen<{ step: string; percent: number; detail: string }>("setup-progress", (e) 
 
 listen<{ success: boolean; error?: string }>("setup-done", (e) => {
   if (e.payload.success) {
-    // Setup just finished — warm the engine NOW so the 1.1 GB model loads into
-    // RAM while the user goes through onboarding. By the time they hit "Start",
-    // the server is ready and translation works on the first try.
+    // Setup just finished — warm the engine NOW so the Python sidecar
+    // (Marian MT + Piper/Pocket TTS, and NeMo Parakeet ASR only when
+    // LT_STT_BACKEND=python) loads while the user goes through onboarding.
+    // By the time they hit "Start", the server is ready and translation
+    // works on the first try. The native STT model (GGUF Parakeet) loads
+    // separately, on the first live-translation session.
     void invoke("warm_engine");
 
     // Hide setup prompt in onboarding, start VB-Cable check
