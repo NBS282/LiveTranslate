@@ -329,6 +329,7 @@ fn bootstrap_pip(app: &AppHandle, python: &std::path::Path) -> Result<(), String
 /// Rewrites the engine binary's PE version-info and icon via bundled rcedit, so the
 /// OS task list shows "LiveTranslate" with our logo instead of "Python".
 /// Best-effort: failures are ignored (the app still works, just keeps the Python name).
+#[cfg(windows)]
 fn rebrand_engine_exe(app: &AppHandle, exe: &PathBuf) {
     let Ok(res_dir) = app.path().resource_dir() else {
         return;
