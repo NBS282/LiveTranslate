@@ -302,9 +302,17 @@ fn warm_engine(app: tauri::AppHandle, state: tauri::State<AppState>) {
 
 #[tauri::command]
 fn check_vbcable() -> bool {
-    audio::devices::list_output_devices()
-        .iter()
-        .any(|d| d.name.to_lowercase().contains("cable"))
+    // Match any supported virtual audio device: VB-Cable on Windows,
+    // BlackHole on macOS (same hint list `find_virtual_output` is tested with).
+    let devices = audio::devices::list_output_devices();
+    audio::devices::find_virtual_output(&devices, &["blackhole", "vb-audio", "cable"]).is_some()
+}
+
+/// The host OS tag (`std::env::consts::OS`: "windows" | "macos" | "linux") so
+/// the frontend can adapt copy like the virtual-audio-device onboarding step.
+#[tauri::command]
+fn get_platform() -> &'static str {
+    std::env::consts::OS
 }
 
 #[tauri::command]
@@ -651,6 +659,7 @@ pub fn run() {
                 start_setup,
                 warm_engine,
                 check_vbcable,
+                get_platform,
                 download_piper_voice,
                 get_voice_profile_status,
                 upload_voice_profile,
@@ -671,6 +680,7 @@ pub fn run() {
                 start_setup,
                 warm_engine,
                 check_vbcable,
+                get_platform,
                 download_piper_voice,
                 get_voice_profile_status,
                 upload_voice_profile,

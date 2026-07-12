@@ -10,11 +10,15 @@
     <!-- ════════════ Splash ════════════ -->
     <div id="splash" class="splash">
       <div class="splash-logo">
-        <svg viewBox="0 0 30 26" fill="none">
-          <rect x="2" y="2" width="19" height="14" rx="3.5" fill="white"/>
-          <polygon points="4,16 10,16 7,21" fill="white"/>
-          <rect x="9" y="6" width="19" height="14" rx="3.5" fill="white" opacity="0.5"/>
-          <polygon points="18,20 25,20 23,25" fill="white" opacity="0.5"/>
+        <!-- Brand mark: speech bubble with audio bars, same as the app icon. -->
+        <svg viewBox="0 0 30 30" fill="none">
+          <rect x="3.5" y="4" width="23" height="17" rx="4" fill="currentColor" opacity="0.35"/>
+          <polygon points="8,21 15,21 10,26.5" fill="currentColor" opacity="0.35"/>
+          <rect x="5.5" y="9.5" width="2.5" height="6" rx="1.25" fill="currentColor"/>
+          <rect x="10" y="8" width="2.5" height="9" rx="1.25" fill="currentColor"/>
+          <rect x="14.5" y="6.5" width="2.5" height="12" rx="1.25" fill="currentColor"/>
+          <rect x="19" y="8" width="2.5" height="9" rx="1.25" fill="currentColor"/>
+          <rect x="23.5" y="9.5" width="2.5" height="6" rx="1.25" fill="currentColor"/>
         </svg>
       </div>
       <div class="splash-title">LiveTranslate</div>
@@ -29,12 +33,15 @@
     <section id="screen-setup" class="screen hidden">
       <div class="setup-wrap">
         <div class="setup-icon">
-          <svg viewBox="0 0 30 30" fill="currentColor">
-            <rect x="2.5" y="18" width="3" height="9" rx="1.5"/>
-            <rect x="8" y="14" width="3" height="13" rx="1.5"/>
-            <rect x="13.5" y="9" width="3" height="18" rx="1.5"/>
-            <rect x="19" y="14" width="3" height="13" rx="1.5"/>
-            <rect x="24.5" y="18" width="3" height="9" rx="1.5"/>
+          <!-- Brand mark: speech bubble with audio bars, same as the app icon. -->
+          <svg viewBox="0 0 30 30" fill="none">
+            <rect x="3.5" y="4" width="23" height="17" rx="4" fill="currentColor" opacity="0.35"/>
+            <polygon points="8,21 15,21 10,26.5" fill="currentColor" opacity="0.35"/>
+            <rect x="5.5" y="9.5" width="2.5" height="6" rx="1.25" fill="currentColor"/>
+            <rect x="10" y="8" width="2.5" height="9" rx="1.25" fill="currentColor"/>
+            <rect x="14.5" y="6.5" width="2.5" height="12" rx="1.25" fill="currentColor"/>
+            <rect x="19" y="8" width="2.5" height="9" rx="1.25" fill="currentColor"/>
+            <rect x="23.5" y="9.5" width="2.5" height="6" rx="1.25" fill="currentColor"/>
           </svg>
         </div>
 
@@ -119,7 +126,7 @@
             </div>
           </div>
 
-          <p class="lead">Necesitamos un micrófono virtual (<strong>VB-Cable</strong>) para enviar tu voz traducida a las apps de llamadas.</p>
+          <p class="lead">Necesitamos un micrófono virtual (<strong id="ob-cable-name">VB-Cable</strong>) para enviar tu voz traducida a las apps de llamadas.</p>
 
           <div id="ob-cable-status" class="status-badge">
             <span class="badge-dot"></span>
@@ -128,7 +135,7 @@
 
           <div id="ob-cable-install" class="note-card hidden" role="button" tabindex="0">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
-            <span><strong>Descargar VB-Cable.</strong> Tras instalarlo, reiniciá si te lo pide y volvé a verificar.</span>
+            <span><strong id="ob-cable-dl-label">Descargar VB-Cable.</strong> Tras instalarlo, reiniciá si te lo pide y volvé a verificar.</span>
           </div>
 
           <div class="step-actions">
