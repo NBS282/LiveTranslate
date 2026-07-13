@@ -1,0 +1,51 @@
+name: Build macOS
+
+# Manual trigger: builds the unsigned macOS .app/.dmg (Apple Silicon) and
+# uploads it as a workflow artifact. Also the release path for macOS builds.
+on:
+  workflow_dispatch:
+
+jobs:
+  dmg:
+    name: macOS · tauri build (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (commit for the v2 tag)
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build .dmg
+        # HF_TOKEN is embedded at compile time by src-tauri/build.rs so the
+        # packaged app can download the gated Pocket TTS voice-cloning weights.
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: pnpm tauri build
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveTranslate-macos-aarch64
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
