@@ -130,8 +130,14 @@ fn emit_progress(app: &AppHandle, step: &str, percent: u8, detail: &str) {
 // Tauri-event progress reporting on top of it.
 
 use crate::net::download::{self, DEFAULT_MAX_ATTEMPTS};
+use crate::net::progress::ProgressThrottle;
 
 const DOWNLOAD_MAX_ATTEMPTS: u32 = DEFAULT_MAX_ATTEMPTS;
+
+/// Progress events are throttled to this interval before reaching the
+/// frontend — see `net::progress` for why: emitting one event per network
+/// chunk floods the webview and can freeze the UI for the whole session.
+const PROGRESS_EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
 fn needs_download(local_size: Option<u64>, remote_size: Option<u64>) -> bool {
     download::needs_download(local_size, remote_size)
@@ -167,15 +173,20 @@ fn download_file(
                 &format!("Retrying download (attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS})…"),
             );
         },
-        move |downloaded, total| {
-            if total > 0 {
-                let pct = ((downloaded * 100) / total).min(100) as u8;
-                emit_progress(
-                    &app_progress,
-                    &step_progress,
-                    pct,
-                    &format!("{:.1} / {:.1} MB", mb(downloaded), mb(total)),
-                );
+        {
+            let mut throttle = ProgressThrottle::new(PROGRESS_EMIT_INTERVAL);
+            move |downloaded, total| {
+                if total > 0
+                    && throttle.should_emit_at(downloaded, total, std::time::Instant::now())
+                {
+                    let pct = ((downloaded * 100) / total).min(100) as u8;
+                    emit_progress(
+                        &app_progress,
+                        &step_progress,
+                        pct,
+                        &format!("{:.1} / {:.1} MB", mb(downloaded), mb(total)),
+                    );
+                }
             }
         },
     )
@@ -457,7 +468,11 @@ pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
 
     let app_progress = app.clone();
     let step_progress = step.to_string();
+    let mut throttle = ProgressThrottle::new(PROGRESS_EMIT_INTERVAL);
     manager.download(entry, move |downloaded, total| {
+        if !throttle.should_emit_at(downloaded, total, std::time::Instant::now()) {
+            return;
+        }
         if let Some(ratio) = downloaded
             .checked_mul(100)
             .and_then(|d| d.checked_div(total))
