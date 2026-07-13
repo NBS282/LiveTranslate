@@ -18,7 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+# macos-private-api backs the transparent overlay on macOS (tauri.conf.json
+# `app.macOSPrivateApi`); it must be on the base dep — tauri-build fails any
+# platform's plain `cargo build` when the config flag is set without it.
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -41,8 +44,4 @@ transcribe-cpp = { version = "0.1.2", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 transcribe-cpp = { version = "0.1.2", default-features = false, features = ["metal"] }
-# Transparent windows on macOS need this feature in addition to the
-# tauri.conf.json `app.macOSPrivateApi` flag; the tauri CLI adds it
-# implicitly, but plain `cargo build` (CI) does not.
-tauri = { version = "2", features = ["macos-private-api"] }
 
