@@ -574,14 +574,14 @@
         <span class="hero-badge">✦ New — Voice cloning: be heard in your own voice</span>
       </div>
     </div>
-    <div class="cta-row">
-      <a href="https://github.com/NBS282/LiveTranslate/releases/latest/download/LiveTranslate-windows-x64-setup.exe" class="btn-primary">
+    <div class="cta-row" id="cta-row">
+      <a id="dl-win" href="https://github.com/NBS282/LiveTranslate/releases/latest/download/LiveTranslate-windows-x64-setup.exe" class="btn-primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
         </svg>
         download for windows
       </a>
-      <a href="https://github.com/NBS282/LiveTranslate/releases/latest/download/LiveTranslate-macos-aarch64.dmg" class="btn-primary">
+      <a id="dl-mac" href="https://github.com/NBS282/LiveTranslate/releases/latest/download/LiveTranslate-macos-aarch64.dmg" class="btn-primary">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
         </svg>
@@ -594,10 +594,34 @@
         </svg>
       </a>
     </div>
-    <p style="margin-top:.6rem;font-size:.8rem;opacity:.6;">
+    <p id="mac-note" style="margin-top:.6rem;font-size:.8rem;opacity:.6;">
       macos beta · apple silicon, macos 12+ · unsigned build: after moving the app to Applications, run
       <code>xattr -cr /Applications/LiveTranslate.app</code> once to clear Gatekeeper's quarantine.
     </p>
+    <script>
+      // Put the visitor's own platform first; the other stays as a plain link.
+      (function () {
+        var ua = navigator.userAgent;
+        var isMac = /Macintosh|Mac OS X/.test(ua);
+        var isWin = /Windows/.test(ua);
+        var win = document.getElementById("dl-win");
+        var mac = document.getElementById("dl-mac");
+        var note = document.getElementById("mac-note");
+        if (!win || !mac) return;
+        function demote(btn) {
+          btn.classList.remove("btn-primary");
+          btn.classList.add("btn-ghost");
+        }
+        if (isMac) {
+          demote(win);
+          win.parentNode.insertBefore(mac, win);
+        } else if (isWin) {
+          demote(mac);
+          if (note) note.style.display = "none";
+        }
+        // Any other OS (Linux, mobile): show both buttons untouched.
+      })();
+    </script>
   </section>
 
   <div class="section-divider"></div>
