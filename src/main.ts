@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { appendLogLine } from "./setup-log";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ listen<{ step: string; percent: number; detail: string }>("setup-progress", (e) 
   } else {
     setProgress("setup-bar-fill", "setup-pct", "setup-step", percent, friendlySetupText(step));
     if (detail) {
-      setupLog.textContent += `${detail}\n`;
+      setupLog.textContent = appendLogLine(setupLog.textContent ?? "", detail);
       setupLog.scrollTop = setupLog.scrollHeight;
     }
   }

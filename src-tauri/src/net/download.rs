@@ -71,7 +71,7 @@ pub fn download_with_progress(
     dest: &Path,
     max_attempts: u32,
     on_retry: impl Fn(u32),
-    on_progress: impl Fn(u64, u64),
+    mut on_progress: impl FnMut(u64, u64),
 ) -> Result<(), String> {
     let part = part_path(dest);
     let mut last_err = String::new();
@@ -81,7 +81,7 @@ pub fn download_with_progress(
             on_retry(attempt);
             std::thread::sleep(backoff_delay(attempt - 1));
         }
-        match download_attempt(url, dest, &part, &on_progress) {
+        match download_attempt(url, dest, &part, &mut on_progress) {
             Ok(()) => return Ok(()),
             Err(e) => last_err = e,
         }
@@ -98,7 +98,7 @@ fn download_attempt(
     url: &str,
     dest: &Path,
     part: &Path,
-    on_progress: &impl Fn(u64, u64),
+    on_progress: &mut impl FnMut(u64, u64),
 ) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -111,7 +111,7 @@ async fn download_attempt_async(
     url: &str,
     dest: &Path,
     part: &Path,
-    on_progress: &impl Fn(u64, u64),
+    on_progress: &mut impl FnMut(u64, u64),
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))

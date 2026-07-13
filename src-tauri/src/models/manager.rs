@@ -69,7 +69,7 @@ impl ModelManager {
     pub fn download(
         &self,
         entry: &ModelEntry,
-        progress: impl Fn(u64, u64),
+        progress: impl FnMut(u64, u64),
     ) -> Result<PathBuf, String> {
         let dest = self.path_for(entry);
         if let Some(parent) = dest.parent() {
