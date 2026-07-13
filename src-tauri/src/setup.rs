@@ -460,6 +460,40 @@ pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Interpreter used to create the dev venv. The engine needs Python >= 3.10
+/// (pocket-tts declares `>=3.10,<3.15`), and macOS's system `python3` is
+/// still 3.9 — so probe explicit versioned binaries first and validate the
+/// version instead of trusting whatever `python3` resolves to.
+fn find_dev_python() -> Result<String, String> {
+    let candidates: &[&str] = if cfg!(windows) {
+        &["python"]
+    } else {
+        &[
+            "python3.13",
+            "python3.12",
+            "python3.11",
+            "python3.10",
+            "python3",
+        ]
+    };
+    for candidate in candidates {
+        let probe = std::process::Command::new(candidate)
+            .args([
+                "-c",
+                "import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)",
+            ])
+            .output();
+        if matches!(probe, Ok(ref out) if out.status.success()) {
+            return Ok(candidate.to_string());
+        }
+    }
+    Err(
+        "no Python between 3.10 and 3.14 found for the dev environment \
+         (install one, e.g. `brew install python@3.12`)"
+            .to_string(),
+    )
+}
+
 // ── Main setup entry point ────────────────────────────────────────────────────
 
 pub fn run_setup(app: AppHandle) {
@@ -488,9 +522,8 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     if !python.exists() && !is_production() {
         emit_progress(app, "Creating Python environment", 5, "");
         let root = crate::translation::sidecar::repo_root();
-        // Windows installs expose `python`; macOS/Linux only ship `python3`.
-        let system_python = if cfg!(windows) { "python" } else { "python3" };
-        let mut venv_cmd = std::process::Command::new(system_python);
+        let system_python = find_dev_python()?;
+        let mut venv_cmd = std::process::Command::new(&system_python);
         venv_cmd
             .args(["-m", "venv", ".venv-engine"])
             .current_dir(&root);
