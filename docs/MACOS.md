@@ -5,17 +5,19 @@
 - **Beta.** Apple Silicon (aarch64) Macs only — Intel Macs are not supported
   yet (setup downloads an `aarch64-apple-darwin` portable Python runtime;
   there is no Intel build path).
-- **Unsigned build.** macOS Gatekeeper will block the first launch with an
-  "unidentified developer" warning. To open it anyway on macOS 15 (Sequoia)
-  and later — the Control-click bypass was removed there:
-  1. Double-click `LiveTranslate.app` once and dismiss the warning dialog.
-  2. Open **System Settings → Privacy & Security**, scroll to the
-     **Security** section, and click **Open Anyway** next to LiveTranslate.
-  3. Confirm **Open** in the final dialog.
+- **Unsigned build.** The app is not code-signed or notarized yet, so a
+  downloaded copy carries macOS's quarantine attribute and Gatekeeper
+  refuses to launch it — usually with a misleading *"LiveTranslate is
+  damaged and can't be opened"* dialog (the app is fine). Clear the
+  quarantine flag once, after copying the app to Applications:
 
-  On macOS 14 (Sonoma) and earlier, right-click (or Control-click) the app →
-  **Open** → **Open** still works. Either way this is only needed once —
-  subsequent launches work normally.
+  ```bash
+  xattr -cr /Applications/LiveTranslate.app
+  ```
+
+  Then launch normally; this is only needed once per install. Proper
+  signing + notarization (Apple Developer Program) removes this step
+  entirely and is planned for a later release.
 
 ## First-run permissions
 
