@@ -439,11 +439,13 @@ pub fn download_native_stt_model(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    // This step owns the [89, 90] slice of the overall setup bar (the caller
+    // This step owns the [89, 94] slice of the overall setup bar (the caller
     // emits 89 before invoking us); scale byte progress into it instead of
-    // emitting a raw 0-100 that would visibly jump the bar backwards.
+    // emitting a raw 0-100 that would visibly jump the bar backwards. The
+    // slice is deliberately wide: this is a ~705 MB download, and a 1-point
+    // slice left the bar visually frozen for its whole duration.
     const PCT_START: u8 = 89;
-    const PCT_END: u8 = 90;
+    const PCT_END: u8 = 94;
 
     let step = "Downloading native STT model";
     emit_progress(
@@ -699,7 +701,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     // model download, which runs `-m lt_engine.setup_models` and needs the package.
     let python_src = crate::translation::sidecar::python_dir();
     if !python_src.exists() {
-        emit_progress(app, "Copying engine source", 90, "");
+        emit_progress(app, "Copying engine source", 94, "");
         match app.path().resource_dir() {
             Ok(res_dir) => {
                 let bundled = res_dir.join("python");
@@ -734,7 +736,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     emit_progress(
         app,
         "Downloading translation models",
-        91,
+        95,
         "~2.0 GB — first-time download, please wait…",
     );
     // NEMO_CACHE_DIR is no longer read by setup_models.py (Parakeet's NeMo
@@ -746,7 +748,7 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     let _ = std::fs::create_dir_all(hf_cache.join("nemo"));
     let python_src_str = python_src.to_string_lossy().into_owned();
 
-    run_python_module(app, &python, "lt_engine.setup_models", 91, 97, &{
+    run_python_module(app, &python, "lt_engine.setup_models", 95, 99, &{
         let mut env_pairs = vec![
             ("PYTHONPATH", python_src_str.as_str()),
             ("HF_HOME", hf_cache_str.as_str()),
