@@ -59,6 +59,9 @@
       "../python": "python",
       "tools/rcedit-x64.exe": "rcedit.exe",
       "icons/icon.ico": "app-icon.ico"
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
     }
   }
 }
