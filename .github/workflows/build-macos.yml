@@ -4,13 +4,10 @@ name: Build macOS
 # uploads it as a workflow artifact. Also the release path for macOS builds.
 on:
   workflow_dispatch:
-  # workflow_dispatch only resolves on the default branch; until this merges,
-  # trigger by pushing a change to this file (e.g. bumping the run marker).
+  # Build a testable .dmg for every branch push so any work in progress can
+  # be installed on a Mac straight from the run's artifacts.
   push:
-    branches: [feat/native-stt-transcribe-cpp]
-    paths: [".github/workflows/build-macos.yml"]
-
-# run marker: 1
+    branches: ["**"]
 
 jobs:
   dmg:
