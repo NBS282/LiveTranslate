@@ -40,17 +40,11 @@ pub fn needs_download(local_size: Option<u64>, remote_size: Option<u64>) -> bool
     }
 }
 
+/// Client for small, bounded requests (HEAD size probes). Body downloads use
+/// the async client inside `download_attempt` instead — see below.
 pub fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        // No TOTAL timeout: a legitimate multi-GB download on a slow link may
-        // take longer than any fixed budget (the old 600s cap both killed
-        // slow-but-progressing downloads AND made a stalled connection sit
-        // frozen for the full 10 minutes before retrying). Stall detection
-        // does the job instead: error out when no bytes arrive for 30s, and
-        // let the caller retry with a Range resume from the `.part` file.
-        .timeout(None)
-        .connect_timeout(Duration::from_secs(30))
-        .read_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())
 }
@@ -95,13 +89,37 @@ pub fn download_with_progress(
     Err(last_err)
 }
 
+/// One download attempt. Runs the async reqwest client on a local
+/// current-thread runtime: only the async `ClientBuilder` exposes
+/// `read_timeout` (idle-read stall detection), which is what we need — a
+/// TOTAL timeout either kills a slow-but-progressing multi-GB download or
+/// leaves a stalled connection frozen for the whole budget before retrying.
 fn download_attempt(
     url: &str,
     dest: &Path,
     part: &Path,
     on_progress: &impl Fn(u64, u64),
 ) -> Result<(), String> {
-    let client = http_client()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to start download runtime: {e}"))?;
+    rt.block_on(download_attempt_async(url, dest, part, on_progress))
+}
+
+async fn download_attempt_async(
+    url: &str,
+    dest: &Path,
+    part: &Path,
+    on_progress: &impl Fn(u64, u64),
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        // Stall detection: error out when no bytes arrive for 30s; the next
+        // attempt resumes from the `.part` offset. No total timeout.
+        .read_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
 
     // Resume from an interrupted attempt when a partial file is present.
     let offset = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
@@ -110,7 +128,7 @@ fn download_attempt(
         req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }
 
-    let mut resp = req.send().map_err(|e| format!("download failed: {e}"))?;
+    let mut resp = req.send().await.map_err(|e| format!("download failed: {e}"))?;
     let status = resp.status();
 
     if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
@@ -137,14 +155,11 @@ fn download_attempt(
         (file, 0u64, resp.content_length().unwrap_or(0))
     };
 
-    let mut buf = [0u8; 65536];
-    loop {
-        let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-        downloaded += n as u64;
+    // Sync file writes are fine here: this future runs alone on a dedicated
+    // current-thread runtime, so blocking briefly on disk I/O starves nothing.
+    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
         on_progress(downloaded, total);
     }
     drop(file);
