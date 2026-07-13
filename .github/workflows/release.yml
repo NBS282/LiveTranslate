@@ -1,0 +1,114 @@
+name: Release
+
+# Tagging vX.Y.Z builds all installers from scratch and publishes a GitHub
+# Release. Assets use STABLE names (no version in the filename) so the
+# download page can link to releases/latest/download/<asset> forever.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows · tauri build (NSIS + MSI)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      # No Rust cache on release builds: distributables always compile from
+      # scratch so a stale native lib can never be linked into an artifact.
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build installers
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: pnpm tauri build
+
+      - name: Stage assets with stable names
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp src-tauri/target/release/bundle/nsis/*.exe release-assets/LiveTranslate-windows-x64-setup.exe
+          cp src-tauri/target/release/bundle/msi/*.msi release-assets/LiveTranslate-windows-x64.msi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: release-assets/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS · tauri build (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build .dmg
+        # MACOSX_DEPLOYMENT_TARGET must be explicit: clang ignores the
+        # -mmacosx-version-min flag the cc crate emits alongside an
+        # unversioned --target triple (see build-macos.yml).
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+        run: pnpm tauri build
+
+      - name: Stage assets with stable names
+        run: |
+          mkdir -p release-assets
+          cp src-tauri/target/release/bundle/dmg/*.dmg release-assets/LiveTranslate-macos-aarch64.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Intermediate env var: interpolating github context directly into
+          # `run:` allows shell injection via a crafted ref name.
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" release-assets/* \
+            --title "$TAG" \
+            --generate-notes
