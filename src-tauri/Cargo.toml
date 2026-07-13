@@ -29,6 +29,9 @@ serde_json = "1"
 cpal = "0.15"
 ringbuf = "0.4"
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
+# Local current-thread runtime for net::download's async client (only the
+# async reqwest ClientBuilder exposes read_timeout stall detection).
+tokio = { version = "1", features = ["rt"] }
 webrtc-vad = "0.4"
 rubato = "0.15"
 hound = "3"

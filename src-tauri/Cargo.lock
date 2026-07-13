@@ -2237,6 +2237,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
+ "tokio",
  "transcribe-cpp",
  "webrtc-vad",
 ]
