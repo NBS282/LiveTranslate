@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the macOS bundle's Info.plist by the Tauri bundler. Without
+     NSMicrophoneUsageDescription, TCC denies microphone access silently (no
+     prompt), which breaks live translation when launched from Finder. -->
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>LiveTranslate captures your voice to transcribe and translate it in real time.</string>
+</dict>
+</plist>

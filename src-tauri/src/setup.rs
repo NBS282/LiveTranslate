@@ -65,16 +65,30 @@ fn is_production() -> bool {
     std::env::var("LT_ENGINE_ROOT").is_ok()
 }
 
+/// Sentinel written as the LAST step of a successful setup run. Its absence
+/// means setup never finished (e.g. the window was closed mid-download), so
+/// `check()` sends the user back to the resumable setup screen instead of
+/// letting a half-install pose as a working app.
+fn setup_marker_path() -> PathBuf {
+    crate::translation::sidecar::repo_root().join(".setup-complete")
+}
+
 // ── Status check ─────────────────────────────────────────────────────────────
 
 pub fn check() -> SetupStatus {
     let venv_ok = venv_python().exists();
     let voice = piper_voice_path();
     let piper_voice_ok = voice.exists() && voice.with_extension("onnx.json").exists();
+    // The marker is written strictly at the end of run_setup_inner, so the
+    // artifact checks above can't be fooled by an interrupted setup (they
+    // all pass long before the model downloads finish). Pre-marker installs
+    // (≤ v0.4.0) re-enter setup once after updating; it is resumable and
+    // skips everything already downloaded.
+    let completed = setup_marker_path().exists();
     SetupStatus {
         venv_ok,
         piper_voice_ok,
-        ready: venv_ok && piper_voice_ok,
+        ready: venv_ok && piper_voice_ok && completed,
     }
 }
 
@@ -748,6 +762,12 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
         }
         env_pairs
     })?;
+
+    // Written strictly last: its presence is what `check()` trusts to mean
+    // "every setup step above ran to completion". An interrupted setup
+    // (closed window mid-download) must NOT look like a finished install.
+    std::fs::write(setup_marker_path(), "ok")
+        .map_err(|e| format!("could not write setup marker: {e}"))?;
 
     emit_progress(app, "Setup complete", 100, "");
     Ok(())
