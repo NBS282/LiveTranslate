@@ -33,9 +33,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (commit for the v2 tag)
-        with:
-          workspaces: src-tauri
+      # Deliberately NO Rust cache here (Handy learned the same lesson): a
+      # native lib compiled by another job with different deployment-target
+      # flags can be restored silently and linked into the shipped artifact.
+      # Distributables always build from scratch.
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -43,8 +44,14 @@ jobs:
       - name: Build .dmg
         # HF_TOKEN is embedded at compile time by src-tauri/build.rs so the
         # packaged app can download the gated Pocket TTS voice-cloning weights.
+        # MACOSX_DEPLOYMENT_TARGET must be set explicitly: clang ignores the
+        # -mmacosx-version-min flag the cc crate emits alongside an
+        # unversioned --target triple, so without this env var ggml's C++
+        # compiles against the SDK default and std::filesystem availability
+        # breaks (or silently drifts from bundle.macOS.minimumSystemVersion).
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: pnpm tauri build
 
       - name: Upload dmg artifact
