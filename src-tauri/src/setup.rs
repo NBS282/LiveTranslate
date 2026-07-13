@@ -577,10 +577,12 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     // installs PyTorch so the import never fails with WinError 126.
     #[cfg(windows)]
     if !std::path::Path::new("C:\\Windows\\System32\\msvcp140.dll").exists() {
+        // 15 = where the surrounding steps left the bar (pip upgrade ends at
+        // 15, PyTorch starts at 15): the bar must never move backwards.
         emit_progress(
             app,
             "Installing Visual C++ Runtime",
-            12,
+            15,
             "Required by PyTorch — ~25 MB, one-time install…",
         );
         let tmp = std::env::temp_dir().join("vc_redist_lt_x64.exe");
