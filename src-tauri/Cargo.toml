@@ -41,4 +41,8 @@ transcribe-cpp = { version = "0.1.2", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 transcribe-cpp = { version = "0.1.2", default-features = false, features = ["metal"] }
+# Transparent windows on macOS need this feature in addition to the
+# tauri.conf.json `app.macOSPrivateApi` flag; the tauri CLI adds it
+# implicitly, but plain `cargo build` (CI) does not.
+tauri = { version = "2", features = ["macos-private-api"] }
 
