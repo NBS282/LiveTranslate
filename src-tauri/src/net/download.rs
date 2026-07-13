@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Default number of attempts (initial try + retries) for `download_with_progress`.
-pub const DEFAULT_MAX_ATTEMPTS: u32 = 4;
+/// Attempts are cheap and cumulative: a stalled connection errors out after
+/// ~30s (see `http_client`) and the next attempt resumes from the `.part`
+/// file, so even a chronically flaky network keeps making forward progress.
+pub const DEFAULT_MAX_ATTEMPTS: u32 = 6;
 
 /// Delay before retry number `retry` (1-based): 2s, 4s, 8s, ...
 pub fn backoff_delay(retry: u32) -> Duration {
@@ -39,7 +42,15 @@ pub fn needs_download(local_size: Option<u64>, remote_size: Option<u64>) -> bool
 
 pub fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(600))
+        // No TOTAL timeout: a legitimate multi-GB download on a slow link may
+        // take longer than any fixed budget (the old 600s cap both killed
+        // slow-but-progressing downloads AND made a stalled connection sit
+        // frozen for the full 10 minutes before retrying). Stall detection
+        // does the job instead: error out when no bytes arrive for 30s, and
+        // let the caller retry with a Range resume from the `.part` file.
+        .timeout(None)
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())
 }
