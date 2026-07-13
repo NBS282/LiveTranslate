@@ -488,7 +488,9 @@ fn run_setup_inner(app: &AppHandle) -> Result<(), String> {
     if !python.exists() && !is_production() {
         emit_progress(app, "Creating Python environment", 5, "");
         let root = crate::translation::sidecar::repo_root();
-        let mut venv_cmd = std::process::Command::new("python");
+        // Windows installs expose `python`; macOS/Linux only ship `python3`.
+        let system_python = if cfg!(windows) { "python" } else { "python3" };
+        let mut venv_cmd = std::process::Command::new(system_python);
         venv_cmd
             .args(["-m", "venv", ".venv-engine"])
             .current_dir(&root);
