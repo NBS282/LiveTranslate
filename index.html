@@ -342,6 +342,10 @@
           <span class="toggle-label">Start</span>
         </button>
         <p id="live-status" class="live-status-text">Idle</p>
+        <!-- Model warmup progress (shown only while the engine loads models) -->
+        <div id="warmup-progress" class="progress-track warmup-progress hidden">
+          <div id="warmup-bar-fill" class="progress-fill" style="width: 0%"></div>
+        </div>
 
         <!-- Phrases feed -->
         <div class="phrases-section">
@@ -349,11 +353,14 @@
             <span>Translations</span>
           </div>
           <ul id="phrases"></ul>
+          <!-- Shown only while the feed is empty (pure CSS, see .phrases-empty) -->
+          <p class="phrases-empty">Press <strong>Start</strong> and speak — your translations will appear here.</p>
         </div>
 
         <!-- Updater status (bottom-right, Handy-style): one click checks or,
              when an update is available, downloads + installs + relaunches. -->
         <footer class="app-footer">
+          <span id="app-version" class="app-version"></span>
           <button id="update-status" class="update-status" type="button">Check for updates</button>
         </footer>
       </div>
