@@ -51,6 +51,57 @@ body {
   transform: translateY(0);
 }
 
+.hidden {
+  display: none !important;
+}
+
+/* ── PTT recording indicator ── */
+.ptt-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ptt-mic {
+  width: 20px;
+  height: 20px;
+  color: #ff5a5a;
+  filter: drop-shadow(0 0 6px rgba(255, 90, 90, 0.5));
+  animation: ptt-mic-pulse 1.3s ease-in-out infinite;
+}
+@keyframes ptt-mic-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.ptt-bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+}
+.ptt-bars i {
+  display: block;
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: #ffffff;
+  animation: ptt-bar 0.9s ease-in-out infinite;
+}
+.ptt-bars i:nth-child(2) { animation-delay: 0.12s; }
+.ptt-bars i:nth-child(3) { animation-delay: 0.24s; }
+.ptt-bars i:nth-child(4) { animation-delay: 0.36s; }
+.ptt-bars i:nth-child(5) { animation-delay: 0.48s; }
+@keyframes ptt-bar {
+  0%, 100% { height: 6px; opacity: 0.7; }
+  50% { height: 20px; opacity: 1; }
+}
+.ptt-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+}
+
 /* ── Card ── */
 .subtitle-card {
   display: flex;
