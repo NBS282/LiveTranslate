@@ -31,6 +31,7 @@ describe("statusLabel", () => {
     expect(statusLabel({ kind: "downloading", percent: 42 })).toBe("Downloading 42%…");
     expect(statusLabel({ kind: "installing" })).toBe("Installing…");
     expect(statusLabel({ kind: "up-to-date" })).toBe("You're up to date");
+    expect(statusLabel({ kind: "check-failed" })).toBe("Couldn't check for updates");
     expect(statusLabel({ kind: "error" })).toBe("Update failed");
   });
 });
@@ -47,6 +48,7 @@ describe("isClickable", () => {
       { kind: "downloading", percent: 10 },
       { kind: "installing" },
       { kind: "up-to-date" },
+      { kind: "check-failed" },
       { kind: "error" },
     ];
     for (const state of blocked) expect(isClickable(state)).toBe(false);
