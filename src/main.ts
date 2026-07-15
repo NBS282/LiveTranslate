@@ -311,7 +311,7 @@ function setupUpdater(): void {
   if (!el) return;
 
   let current: UpdateState = { kind: "idle" };
-  let upToDateTimer: number | undefined;
+  let revertTimer: number | undefined;
 
   function render(state: UpdateState): void {
     current = state;
@@ -321,9 +321,9 @@ function setupUpdater(): void {
   }
 
   async function runCheck(manual: boolean): Promise<void> {
-    if (upToDateTimer !== undefined) {
-      clearTimeout(upToDateTimer);
-      upToDateTimer = undefined;
+    if (revertTimer !== undefined) {
+      clearTimeout(revertTimer);
+      revertTimer = undefined;
     }
     render({ kind: "checking" });
     try {
@@ -334,15 +334,21 @@ function setupUpdater(): void {
         // Only acknowledge "up to date" after a user-initiated check, then
         // fall back to the idle affordance a few seconds later.
         render({ kind: "up-to-date" });
-        upToDateTimer = window.setTimeout(() => render({ kind: "idle" }), 3000);
+        revertTimer = window.setTimeout(() => render({ kind: "idle" }), 3000);
       } else {
         render({ kind: "idle" });
       }
     } catch (err) {
-      // Updater is unconfigured in dev builds and offline checks fail — neither
-      // is worth surfacing. Return to the idle affordance.
+      // A check throws when the release manifest can't be fetched — e.g. no
+      // published latest.json yet, or the machine is offline. Surface it only
+      // for a user-initiated check (transient), and stay silent on auto-check.
       console.error("update check failed:", err);
-      render({ kind: "idle" });
+      if (manual) {
+        render({ kind: "check-failed" });
+        revertTimer = window.setTimeout(() => render({ kind: "idle" }), 3000);
+      } else {
+        render({ kind: "idle" });
+      }
     }
   }
 

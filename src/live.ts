@@ -155,14 +155,53 @@ void listen<{ source_text: string; translated_text: string; error: string | null
 
 // ── Engine warmup listeners ───────────────────────────────────────────────────
 // The engine binds its port immediately and loads models in the background;
-// Rust polls /health and relays real progress so the wait is not a blank stare.
+// Rust polls /health and relays real progress. That progress arrives in coarse
+// jumps (one step per model: ~33 → 66 → 100), which looks janky shown raw. We
+// animate a displayed value that eases toward each real milestone and creeps a
+// bounded amount between them, so the bar feels alive without ever faking
+// completion — it never reaches 100% until the engine reports it.
+
+let warmupTarget = 0; // latest real progress from the backend
+let warmupDisplay = 0; // animated value actually shown
+let warmupTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopWarmupAnim(): void {
+  if (warmupTimer !== null) {
+    clearInterval(warmupTimer);
+    warmupTimer = null;
+  }
+}
+
+function startWarmupAnim(): void {
+  if (warmupTimer !== null) return;
+  warmupTimer = setInterval(() => {
+    // Yield the status line if something else took it over (session started,
+    // error, etc.) so we never fight another writer.
+    if (!statusEl.textContent?.startsWith("Loading translation models")) {
+      stopWarmupAnim();
+      return;
+    }
+    // Creep toward a soft ceiling just above the real target; hold there until
+    // the next milestone. Only a real 100 unlocks the last stretch.
+    const ceiling = warmupTarget >= 100 ? 100 : Math.min(95, warmupTarget + 15);
+    if (warmupDisplay < ceiling) {
+      warmupDisplay = Math.min(ceiling, warmupDisplay + Math.max(0.4, (ceiling - warmupDisplay) * 0.05));
+    }
+    statusEl.textContent = `Loading translation models… ${Math.round(warmupDisplay)}%`;
+    if (warmupDisplay >= 100) stopWarmupAnim();
+  }, 80);
+}
 
 void listen("engine-starting", () => {
-  statusEl.textContent = "Loading translation models… (first run can take a few minutes)";
+  warmupTarget = 0;
+  warmupDisplay = 0;
+  statusEl.textContent = "Loading translation models… 0%";
+  startWarmupAnim();
 });
 
 void listen<{ progress: number }>("engine-warmup-progress", (e) => {
-  statusEl.textContent = `Loading translation models… ${e.payload.progress}%`;
+  warmupTarget = Math.max(warmupTarget, e.payload.progress);
+  startWarmupAnim();
 });
 
 // ── PTT state listener ────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ export type UpdateState =
   | { kind: "downloading"; percent: number }
   | { kind: "installing" }
   | { kind: "up-to-date" }
+  | { kind: "check-failed" }
   | { kind: "error" };
 
 // Clamp a running byte count to an integer 0–100 percent. Returns 0 when the
@@ -36,6 +37,8 @@ export function statusLabel(state: UpdateState): string {
       return "Installing…";
     case "up-to-date":
       return "You're up to date";
+    case "check-failed":
+      return "Couldn't check for updates";
     case "error":
       return "Update failed";
   }
