@@ -32,14 +32,14 @@ function show(id: string): void {
 function friendlySetupText(step: string): string {
   const s = step.toLowerCase();
   if (s.includes("python") || s.includes("environment") || s.includes("pip") || s.includes("extract"))
-    return "Preparando todo para ti…";
+    return "Getting everything ready…";
   if (s.includes("pytorch") || s.includes("engine") || s.includes("packages"))
-    return "Instalando el motor de traducción…";
+    return "Installing the translation engine…";
   if (s.includes("voice") || s.includes("piper") || s.includes("model"))
-    return "Descargando la voz…";
+    return "Downloading the voice…";
   if (s.includes("complete"))
-    return "Casi listo…";
-  return "Preparando todo para ti…";
+    return "Almost done…";
+  return "Getting everything ready…";
 }
 
 function setProgress(
@@ -117,7 +117,7 @@ async function init(): Promise<void> {
 document.getElementById("btn-ob-setup")!.addEventListener("click", () => {
   const btn = document.getElementById("btn-ob-setup") as HTMLButtonElement;
   btn.disabled = true;
-  btn.textContent = "Instalando…";
+  btn.textContent = "Installing…";
   document.getElementById("ob-setup-progress")!.classList.remove("hidden");
   void invoke("start_setup");
 });
@@ -161,13 +161,13 @@ listen<{ success: boolean; error?: string }>("setup-done", (e) => {
   } else {
     // Show error where appropriate
     if (setupOrigin === "onboarding") {
-      document.getElementById("ob-setup-step")!.textContent = "Algo salió mal. Intentá de nuevo.";
+      document.getElementById("ob-setup-step")!.textContent = "Something went wrong. Try again.";
       const btn = document.getElementById("btn-ob-setup") as HTMLButtonElement;
       btn.disabled = false;
-      btn.textContent = "Reintentar";
+      btn.textContent = "Retry";
     } else {
       const errMsg = e.payload.error ?? "";
-      const firstLine = errMsg.split("\n")[0] || "Algo salió mal. Mirá los detalles e intentá de nuevo.";
+      const firstLine = errMsg.split("\n")[0] || "Something went wrong. Check the details and try again.";
       document.getElementById("setup-step")!.textContent = firstLine;
       const log = document.getElementById("setup-log")!;
       if (errMsg) {
@@ -175,10 +175,10 @@ listen<{ success: boolean; error?: string }>("setup-done", (e) => {
         log.scrollTop = log.scrollHeight;
       }
       log.classList.remove("hidden");
-      document.getElementById("setup-details-toggle")!.textContent = "Ocultar detalles";
+      document.getElementById("setup-details-toggle")!.textContent = "Hide details";
       const btn = document.getElementById("btn-run-setup") as HTMLButtonElement;
       btn.disabled = false;
-      btn.textContent = "Reintentar";
+      btn.textContent = "Retry";
     }
   }
 });
@@ -189,7 +189,7 @@ document.getElementById("btn-run-setup")!.addEventListener("click", () => {
   setupOrigin = "screen-setup";
   const btn = document.getElementById("btn-run-setup") as HTMLButtonElement;
   btn.disabled = true;
-  btn.textContent = "Instalando…";
+  btn.textContent = "Installing…";
   document.getElementById("setup-progress-box")!.classList.remove("hidden");
   setupLog.textContent = "";
   void invoke("start_setup");
@@ -198,7 +198,7 @@ document.getElementById("btn-run-setup")!.addEventListener("click", () => {
 document.getElementById("setup-details-toggle")!.addEventListener("click", () => {
   const log = document.getElementById("setup-log")!;
   const hidden = log.classList.toggle("hidden");
-  document.getElementById("setup-details-toggle")!.textContent = hidden ? "Ver detalles" : "Ocultar detalles";
+  document.getElementById("setup-details-toggle")!.textContent = hidden ? "View details" : "Hide details";
 });
 
 // ── Onboarding step 1: virtual audio device (VB-Cable / BlackHole) ───────────
@@ -214,7 +214,7 @@ const platformReady: Promise<void> = (async () => {
     if (os === "macos") {
       virtualCable = { name: "BlackHole", url: "https://existential.audio/blackhole/" };
       document.getElementById("ob-cable-name")!.textContent = virtualCable.name;
-      document.getElementById("ob-cable-dl-label")!.textContent = `Descargar ${virtualCable.name}.`;
+      document.getElementById("ob-cable-dl-label")!.textContent = `Download ${virtualCable.name}.`;
     }
   } catch {
     // Unknown platform: keep the Windows copy.
@@ -223,17 +223,17 @@ const platformReady: Promise<void> = (async () => {
 
 async function checkVBCable(): Promise<void> {
   btnRecheck.disabled = true;
-  btnRecheck.textContent = "Verificando…";
+  btnRecheck.textContent = "Checking…";
 
   try {
     await platformReady;
     const found = await invoke<boolean>("check_vbcable");
     if (found) {
-      setStatusBadge("ob-cable-status", "ok", `${virtualCable.name} detectado`);
+      setStatusBadge("ob-cable-status", "ok", `${virtualCable.name} detected`);
       document.getElementById("ob-cable-install")!.classList.add("hidden");
       document.getElementById("btn-ob-next-1")!.classList.remove("hidden");
     } else {
-      setStatusBadge("ob-cable-status", "err", `No encontrado — instalá ${virtualCable.name} y volvé a verificar`);
+      setStatusBadge("ob-cable-status", "err", `Not found — install ${virtualCable.name} and check again`);
       document.getElementById("ob-cable-install")!.classList.remove("hidden");
       document.getElementById("btn-ob-next-1")!.classList.add("hidden");
     }
@@ -241,7 +241,7 @@ async function checkVBCable(): Promise<void> {
     setStatusBadge("ob-cable-status", "err", `Check failed: ${err}`);
   } finally {
     btnRecheck.disabled = false;
-    btnRecheck.textContent = "Re-verificar";
+    btnRecheck.textContent = "Check again";
   }
 }
 

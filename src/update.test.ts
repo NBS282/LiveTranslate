@@ -24,14 +24,14 @@ describe("clampPercent", () => {
 });
 
 describe("statusLabel", () => {
-  it("labels each state in Spanish", () => {
-    expect(statusLabel({ kind: "idle" })).toBe("Buscar actualizaciones");
-    expect(statusLabel({ kind: "checking" })).toBe("Buscando…");
-    expect(statusLabel({ kind: "available", version: "0.6.0" })).toBe("Actualización disponible");
-    expect(statusLabel({ kind: "downloading", percent: 42 })).toBe("Descargando 42%…");
-    expect(statusLabel({ kind: "installing" })).toBe("Instalando…");
-    expect(statusLabel({ kind: "up-to-date" })).toBe("Estás al día");
-    expect(statusLabel({ kind: "error" })).toBe("Error al actualizar");
+  it("labels each state in English", () => {
+    expect(statusLabel({ kind: "idle" })).toBe("Check for updates");
+    expect(statusLabel({ kind: "checking" })).toBe("Checking…");
+    expect(statusLabel({ kind: "available", version: "0.6.0" })).toBe("Update available");
+    expect(statusLabel({ kind: "downloading", percent: 42 })).toBe("Downloading 42%…");
+    expect(statusLabel({ kind: "installing" })).toBe("Installing…");
+    expect(statusLabel({ kind: "up-to-date" })).toBe("You're up to date");
+    expect(statusLabel({ kind: "error" })).toBe("Update failed");
   });
 });
 

@@ -47,7 +47,7 @@ function sleep(ms: number): Promise<void> {
 // ── Status ────────────────────────────────────────────────────────────────────
 
 function setPreparing(): void {
-  statusLabel.textContent = "Preparando voz clonada…";
+  statusLabel.textContent = "Preparing cloned voice…";
   cloneToggle.disabled = true;
   deleteBtn.classList.add("hidden");
 }
@@ -62,11 +62,11 @@ export async function loadVoiceStatus(): Promise<void> {
   // an upload that needs the server listening, and on first launch warmup can
   // take several minutes (models may still be downloading).
   recordBtn.disabled = true;
-  recordBtn.title = "El motor de traducción se está preparando…";
+  recordBtn.title = "The translation engine is getting ready…";
   if (hasStoredProfile()) {
     setPreparing();
   } else {
-    statusLabel.textContent = "Preparando motor…";
+    statusLabel.textContent = "Preparing engine…";
   }
 
   // Poll until the engine responds — warmup can take minutes on first launch,
@@ -85,7 +85,7 @@ export async function loadVoiceStatus(): Promise<void> {
 
   // Engine never came up. Leave the stored flag untouched so a later reload can
   // still detect the profile; keep recording blocked and say so honestly.
-  statusLabel.textContent = "Motor no disponible — reiniciá la aplicación";
+  statusLabel.textContent = "Engine unavailable — restart the app";
 }
 
 function updateUI(profileExists: boolean): void {
@@ -93,11 +93,11 @@ function updateUI(profileExists: boolean): void {
   recordBtn.disabled = false;
   recordBtn.title = "";
   if (profileExists) {
-    statusLabel.textContent = "Voz clonada lista";
+    statusLabel.textContent = "Cloned voice ready";
     deleteBtn.classList.remove("hidden");
     cloneToggle.disabled = false;
   } else {
-    statusLabel.textContent = "Genérica (Piper)";
+    statusLabel.textContent = "Generic (Piper)";
     deleteBtn.classList.add("hidden");
     cloneToggle.disabled = true;
     setCloneEnabled(false);
@@ -157,9 +157,9 @@ startRecBtn.addEventListener("click", async () => {
 
     startRecBtn.classList.add("hidden");
     stopRecBtn.classList.remove("hidden");
-    recStatusEl.textContent = "Grabando… hablá con naturalidad.";
+    recStatusEl.textContent = "Recording… speak naturally.";
   } catch (err) {
-    recStatusEl.textContent = `Error de micrófono: ${err}`;
+    recStatusEl.textContent = `Microphone error: ${err}`;
   }
 });
 
@@ -167,7 +167,7 @@ stopRecBtn.addEventListener("click", async () => {
   if (!mediaRecorder) return;
   stopRecBtn.disabled = true;
   clearTimerInterval();
-  recStatusEl.textContent = "Procesando voz… (tarda unos segundos)";
+  recStatusEl.textContent = "Processing voice… (takes a few seconds)";
 
   await new Promise<void>((resolve) => {
     mediaRecorder!.onstop = () => resolve();
@@ -185,7 +185,7 @@ stopRecBtn.addEventListener("click", async () => {
 
   try {
     await invoke("upload_voice_profile", { audioData });
-    recStatusEl.textContent = "¡Voz guardada!";
+    recStatusEl.textContent = "Voice saved!";
     updateUI(true);
     setStoredProfile(true);
     setTimeout(() => modal.classList.add("hidden"), 1200);
