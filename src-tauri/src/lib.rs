@@ -548,6 +548,16 @@ pub fn run() {
             use tauri::menu::{Menu, MenuItem};
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
+            // In-app updater (desktop only): the plugin checks the GitHub
+            // `latest.json` endpoint, verifies the minisign signature, downloads
+            // the update, and the process plugin relaunches the app afterwards.
+            #[cfg(desktop)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_process::init())?;
+            }
+
             // Production: resolve writable data dir and copy bundled Python source.
             #[cfg(not(debug_assertions))]
             {

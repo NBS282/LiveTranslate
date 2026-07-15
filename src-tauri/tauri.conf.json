@@ -48,6 +48,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -62,6 +63,14 @@
     },
     "macOS": {
       "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/NBS282/LiveTranslate/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQwNkJCN0I0QTY4QkEyQkIKUldTN29vdW10TGRyUU9pMFoyRFdVaVJvWG9PM0wrVWhHQ3pJbnppWU1qZUlNUVE4djh6eURyK2QK"
     }
   }
 }
