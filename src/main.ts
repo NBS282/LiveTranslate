@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { appendLogLine } from "./setup-log";
+import { clampPercent, isClickable, statusLabel, type UpdateState } from "./update";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -296,6 +299,95 @@ document.getElementById("btn-reopen-onboarding")!.addEventListener("click", () =
   void checkVBCable();
 });
 
+// ── In-app updater (Handy-style footer status) ───────────────────────────────
+//
+// A single footer button in the main screen. It auto-checks once, silently, on
+// boot. Clicking it runs a manual check when idle, or — when an update is
+// available — downloads, installs, and relaunches in one click. All Tauri calls
+// live here; the pure state/label/percent logic is in update.ts (unit-tested).
+
+function setupUpdater(): void {
+  const el = document.getElementById("update-status") as HTMLButtonElement | null;
+  if (!el) return;
+
+  let current: UpdateState = { kind: "idle" };
+  let upToDateTimer: number | undefined;
+
+  function render(state: UpdateState): void {
+    current = state;
+    el!.textContent = statusLabel(state);
+    el!.disabled = !isClickable(state);
+    el!.classList.toggle("is-available", state.kind === "available");
+  }
+
+  async function runCheck(manual: boolean): Promise<void> {
+    if (upToDateTimer !== undefined) {
+      clearTimeout(upToDateTimer);
+      upToDateTimer = undefined;
+    }
+    render({ kind: "checking" });
+    try {
+      const update = await check();
+      if (update) {
+        render({ kind: "available", version: update.version });
+      } else if (manual) {
+        // Only acknowledge "up to date" after a user-initiated check, then
+        // fall back to the idle affordance a few seconds later.
+        render({ kind: "up-to-date" });
+        upToDateTimer = window.setTimeout(() => render({ kind: "idle" }), 3000);
+      } else {
+        render({ kind: "idle" });
+      }
+    } catch (err) {
+      // Updater is unconfigured in dev builds and offline checks fail — neither
+      // is worth surfacing. Return to the idle affordance.
+      console.error("update check failed:", err);
+      render({ kind: "idle" });
+    }
+  }
+
+  async function runInstall(): Promise<void> {
+    render({ kind: "downloading", percent: 0 });
+    try {
+      const update = await check();
+      if (!update) {
+        render({ kind: "idle" });
+        return;
+      }
+      let downloaded = 0;
+      let total = 0;
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            total = event.data.contentLength ?? 0;
+            downloaded = 0;
+            break;
+          case "Progress":
+            downloaded += event.data.chunkLength;
+            render({ kind: "downloading", percent: clampPercent(downloaded, total) });
+            break;
+          case "Finished":
+            render({ kind: "installing" });
+            break;
+        }
+      });
+      await relaunch();
+    } catch (err) {
+      console.error("update install failed:", err);
+      render({ kind: "error" });
+    }
+  }
+
+  el.addEventListener("click", () => {
+    if (current.kind === "idle") void runCheck(true);
+    else if (current.kind === "available") void runInstall();
+  });
+
+  // Silent auto-check on boot.
+  void runCheck(false);
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 void init();
+setupUpdater();

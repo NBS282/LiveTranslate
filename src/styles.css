@@ -1268,3 +1268,35 @@ body {
   min-height: 1.2em;
   line-height: 1.4;
 }
+
+/* ── Updater status (footer, bottom-right) ── */
+.app-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+}
+.update-status {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-family: inherit;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.update-status:hover:not(:disabled) {
+  color: var(--ink);
+}
+.update-status:disabled {
+  cursor: default;
+}
+/* An available update is the one moment the status earns emphasis. */
+.update-status.is-available {
+  color: var(--es);
+  font-weight: 600;
+}
+.update-status.is-available:hover:not(:disabled) {
+  color: var(--es);
+}

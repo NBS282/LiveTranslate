@@ -8,6 +8,8 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "opener:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
