@@ -874,7 +874,6 @@ pub fn start_ptt(
     }
 
     let stop_prod = stop.clone();
-    let app_prod = app.clone();
     std::thread::spawn(move || {
         if let Err(e) = run_producer_ptt(
             device,
@@ -885,7 +884,6 @@ pub fn start_ptt(
             stop_prod,
             ptt_recording,
             pending_finals,
-            app_prod,
         ) {
             eprintln!("ptt producer error: {e}");
         }
@@ -910,7 +908,6 @@ fn run_producer_ptt(
     stop: Arc<AtomicBool>,
     ptt_recording: Arc<AtomicBool>,
     pending_finals: Arc<AtomicUsize>,
-    app: AppHandle,
 ) -> Result<(), String> {
     let (samp_tx, samp_rx) = std::sync::mpsc::channel::<Vec<f32>>();
 
@@ -942,8 +939,6 @@ fn run_producer_ptt(
     let mut frame_acc: Vec<i16> = Vec::with_capacity(FRAME_SAMPLES_16K);
     let mut ptt_buffer: Vec<i16> = Vec::new();
     let mut was_recording = false;
-    // Throttles the mic-level events emitted for the overlay's recording bars.
-    let mut level_frame: u64 = 0;
 
     while !stop.load(Ordering::Relaxed) {
         // Poll recording flag at the TOP of every loop iteration (every audio
@@ -984,21 +979,6 @@ fn run_producer_ptt(
                         if now_recording {
                             ptt_buffer.extend_from_slice(&frame_acc);
                             let _ = pass_tx.send(frame_acc.clone());
-                            // Emit a throttled RMS level (0..1 over the 30 ms
-                            // frame) so the overlay's recording bars track the
-                            // speaker's actual voice, ~every 60 ms.
-                            level_frame = level_frame.wrapping_add(1);
-                            if level_frame % 2 == 0 {
-                                let sum_sq: f64 = frame_acc
-                                    .iter()
-                                    .map(|&s| {
-                                        let f = s as f64 / i16::MAX as f64;
-                                        f * f
-                                    })
-                                    .sum();
-                                let rms = (sum_sq / frame_acc.len() as f64).sqrt() as f32;
-                                let _ = app.emit("mic-level", serde_json::json!({ "level": rms }));
-                            }
                         }
                         frame_acc.clear();
                     }

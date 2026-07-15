@@ -76,17 +76,23 @@ body {
   display: flex;
   align-items: center;
   gap: 3px;
-  height: 24px;
+  height: 22px;
 }
-/* Heights are driven from the real mic level (mic-level event) in overlay.ts;
-   the transition smooths the ~60 ms cadence into a fluid waveform. */
 .ptt-bars i {
   display: block;
   width: 3px;
-  height: 4px;
+  height: 6px;
   border-radius: 2px;
   background: #ffffff;
-  transition: height 0.07s ease-out;
+  animation: ptt-bar 0.9s ease-in-out infinite;
+}
+.ptt-bars i:nth-child(2) { animation-delay: 0.12s; }
+.ptt-bars i:nth-child(3) { animation-delay: 0.24s; }
+.ptt-bars i:nth-child(4) { animation-delay: 0.36s; }
+.ptt-bars i:nth-child(5) { animation-delay: 0.48s; }
+@keyframes ptt-bar {
+  0%, 100% { height: 6px; opacity: 0.7; }
+  50% { height: 20px; opacity: 1; }
 }
 .ptt-label {
   font-size: 0.85rem;
