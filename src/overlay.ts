@@ -7,7 +7,6 @@ const srcText = document.getElementById("src-text")!;
 const tgtChars = document.getElementById("tgt-chars")!;
 const pttIndicator = document.getElementById("ptt-indicator")!;
 const subtitleBody = document.querySelector<HTMLElement>(".subtitle-body")!;
-const pttBars = Array.from(pttIndicator.querySelectorAll<HTMLElement>(".ptt-bars i"));
 
 const win = getCurrentWebviewWindow();
 
@@ -270,23 +269,10 @@ void listen<{ source_text: string; translated_text: string; error: string | null
 // regardless of the subtitles toggle, since it is shortcut feedback, not a
 // caption.
 
-// The middle bar is tallest, tapering out — a waveform silhouette. Heights are
-// set from the live mic level (mic-level event) only while recording.
-const BAR_FACTORS = [0.55, 0.8, 1, 0.8, 0.55];
-const BAR_MIN = 4;
-const BAR_RANGE = 18;
-let pttActive = false;
-
-function resetPttBars(): void {
-  for (const bar of pttBars) bar.style.height = `${BAR_MIN}px`;
-}
-
 void listen<boolean>("ptt-state", async (e) => {
   if (e.payload) {
     // Recording started: take over the card with the indicator, drop any
     // lingering caption, and invalidate in-flight partial/phrase continuations.
-    pttActive = true;
-    resetPttBars();
     epoch++;
     cancelHide();
     cancelStream();
@@ -302,22 +288,10 @@ void listen<boolean>("ptt-state", async (e) => {
     // Released: hide the indicator and restore the caption body for the
     // translation that follows. If nothing arrives soon (e.g. silence), let the
     // empty card fade — an incoming partial/phrase cancels this via cancelHide.
-    pttActive = false;
-    resetPttBars();
     pttIndicator.classList.add("hidden");
     subtitleBody.classList.remove("hidden");
     scheduleHide(2500);
   }
-});
-
-// Drive the recording bars from the real mic level while the shortcut is held.
-void listen<{ level: number }>("mic-level", (e) => {
-  if (!pttActive) return;
-  // Perceptual curve + gain so ordinary speech fills the bars without clipping.
-  const lvl = Math.min(1, Math.sqrt(Math.max(0, e.payload.level)) * 1.9);
-  pttBars.forEach((bar, i) => {
-    bar.style.height = `${(BAR_MIN + lvl * BAR_RANGE * (BAR_FACTORS[i] ?? 1)).toFixed(1)}px`;
-  });
 });
 
 void init();
