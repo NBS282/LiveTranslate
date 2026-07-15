@@ -9,6 +9,13 @@
   <body>
     <div id="subtitle" class="subtitle">
       <div class="subtitle-card">
+        <!-- PTT recording indicator: shown while the push-to-talk shortcut is
+             held, so you get on-screen confirmation you're being captured. -->
+        <div id="ptt-indicator" class="ptt-indicator hidden" aria-hidden="true">
+          <svg class="ptt-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><path d="M12 19v3" /></svg>
+          <span class="ptt-bars"><i></i><i></i><i></i><i></i><i></i></span>
+          <span class="ptt-label">Recording</span>
+        </div>
         <div class="subtitle-body">
           <p id="tgt-chars" class="tgt"></p>
           <p id="src-text" class="src"></p>

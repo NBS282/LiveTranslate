@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 const subtitle = document.getElementById("subtitle")!;
 const srcText = document.getElementById("src-text")!;
 const tgtChars = document.getElementById("tgt-chars")!;
+const pttIndicator = document.getElementById("ptt-indicator")!;
+const subtitleBody = document.querySelector<HTMLElement>(".subtitle-body")!;
 
 const win = getCurrentWebviewWindow();
 
@@ -130,7 +132,7 @@ function cancelHide(): void {
   }
 }
 
-function scheduleHide(): void {
+function scheduleHide(delay = 9000): void {
   cancelHide();
   hideTimer = setTimeout(() => {
     hideTimer = null;
@@ -139,7 +141,7 @@ function scheduleHide(): void {
       fadeTimer = null;
       void win.hide();
     }, 280);
-  }, 9000);
+  }, delay);
 }
 
 // The main window tells us whether on-screen subtitles are enabled.
@@ -259,5 +261,37 @@ void listen<{ source_text: string; translated_text: string; error: string | null
     scheduleHide();
   },
 );
+
+// ── PTT recording indicator ───────────────────────────────────────────────────
+// Push-to-talk buffers audio while the shortcut is held and only transcribes on
+// release, so there is no live text yet — but we surface a recording indicator
+// so you get immediate on-screen confirmation the shortcut registered. Shown
+// regardless of the subtitles toggle, since it is shortcut feedback, not a
+// caption.
+
+void listen<boolean>("ptt-state", async (e) => {
+  if (e.payload) {
+    // Recording started: take over the card with the indicator, drop any
+    // lingering caption, and invalidate in-flight partial/phrase continuations.
+    epoch++;
+    cancelHide();
+    cancelStream();
+    clearPartial();
+    tgtChars.textContent = "";
+    srcText.textContent = "";
+    subtitleBody.classList.add("hidden");
+    pttIndicator.classList.remove("hidden");
+    await win.show();
+    subtitle.classList.add("visible");
+    await resizeToContent();
+  } else {
+    // Released: hide the indicator and restore the caption body for the
+    // translation that follows. If nothing arrives soon (e.g. silence), let the
+    // empty card fade — an incoming partial/phrase cancels this via cancelHide.
+    pttIndicator.classList.add("hidden");
+    subtitleBody.classList.remove("hidden");
+    scheduleHide(2500);
+  }
+});
 
 void init();
