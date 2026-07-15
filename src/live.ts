@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, emit } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { cloneEnabled } from "./voice";
+import { pickDefaultOutputDevice } from "./output-device";
 
 const inputSelect = document.querySelector<HTMLSelectElement>("#live-device")!;
 const outputSelect = document.querySelector<HTMLSelectElement>("#live-output-device")!;
@@ -282,7 +283,15 @@ async function loadDevices(): Promise<void> {
     o.textContent = name;
     outputSelect.appendChild(o);
   }
+  // Default to the virtual audio cable (VB-Cable on Windows, BlackHole on
+  // macOS) so the translated voice reaches the call app without the user
+  // hunting for it — unless they previously picked a different output.
+  outputSelect.value = pickDefaultOutputDevice(outputs, localStorage.getItem("lt.outputDevice"));
 }
+
+outputSelect.addEventListener("change", () => {
+  localStorage.setItem("lt.outputDevice", outputSelect.value);
+});
 
 // ── Toggle UI helper ──────────────────────────────────────────────────────────
 
