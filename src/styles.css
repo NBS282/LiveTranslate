@@ -132,8 +132,11 @@ body {
 .splash-logo {
   width: 60px;
   height: 60px;
-  background: linear-gradient(135deg, var(--es) 0 50%, var(--en) 50% 100%);
-  border-radius: 50%;
+  /* Match the system app icon (icons/icon.svg): rounded square with a smooth
+     diagonal gradient, not a split-color circle, so the in-app mark reads as
+     the same logo shown in the taskbar and installer. */
+  background: linear-gradient(135deg, var(--es), var(--en));
+  border-radius: 22%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -394,8 +397,9 @@ button {
 .setup-icon {
   width: 54px;
   height: 54px;
-  background: linear-gradient(135deg, var(--es) 0 50%, var(--en) 50% 100%);
-  border-radius: 50%;
+  /* Same brand mark as the system app icon (see .splash-logo). */
+  background: linear-gradient(135deg, var(--es), var(--en));
+  border-radius: 22%;
   display: flex;
   align-items: center;
   justify-content: center;
