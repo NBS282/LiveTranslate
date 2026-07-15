@@ -21,23 +21,23 @@ export function clampPercent(downloaded: number, total: number): number {
   return Math.min(100, Math.max(0, pct));
 }
 
-// User-facing label for each state (Spanish — matches the app UI language).
+// User-facing label for each state (matches the app UI language: English).
 export function statusLabel(state: UpdateState): string {
   switch (state.kind) {
     case "idle":
-      return "Buscar actualizaciones";
+      return "Check for updates";
     case "checking":
-      return "Buscando…";
+      return "Checking…";
     case "available":
-      return "Actualización disponible";
+      return "Update available";
     case "downloading":
-      return `Descargando ${state.percent}%…`;
+      return `Downloading ${state.percent}%…`;
     case "installing":
-      return "Instalando…";
+      return "Installing…";
     case "up-to-date":
-      return "Estás al día";
+      return "You're up to date";
     case "error":
-      return "Error al actualizar";
+      return "Update failed";
   }
 }
 
