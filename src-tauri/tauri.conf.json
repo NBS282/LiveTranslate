@@ -17,11 +17,11 @@
         "label": "main",
         "title": "LiveTranslate",
         "width": 480,
-        "height": 600,
+        "height": 760,
         "resizable": true,
         "maximizable": false,
         "minWidth": 420,
-        "minHeight": 520
+        "minHeight": 680
       },
       {
         "label": "overlay",
