@@ -165,14 +165,19 @@ let warmupTarget = 0; // latest real progress from the backend
 let warmupDisplay = 0; // animated value actually shown
 let warmupTimer: ReturnType<typeof setInterval> | null = null;
 
+const warmupBox = document.querySelector<HTMLDivElement>("#warmup-progress")!;
+const warmupFill = document.querySelector<HTMLDivElement>("#warmup-bar-fill")!;
+
 function stopWarmupAnim(): void {
   if (warmupTimer !== null) {
     clearInterval(warmupTimer);
     warmupTimer = null;
   }
+  warmupBox.classList.add("hidden");
 }
 
 function startWarmupAnim(): void {
+  warmupBox.classList.remove("hidden");
   if (warmupTimer !== null) return;
   warmupTimer = setInterval(() => {
     // Yield the status line if something else took it over (session started,
@@ -188,6 +193,7 @@ function startWarmupAnim(): void {
       warmupDisplay = Math.min(ceiling, warmupDisplay + Math.max(0.4, (ceiling - warmupDisplay) * 0.05));
     }
     statusEl.textContent = `Loading translation models… ${Math.round(warmupDisplay)}%`;
+    warmupFill.style.width = `${Math.round(warmupDisplay)}%`;
     if (warmupDisplay >= 100) stopWarmupAnim();
   }, 80);
 }
@@ -196,6 +202,7 @@ void listen("engine-starting", () => {
   warmupTarget = 0;
   warmupDisplay = 0;
   statusEl.textContent = "Loading translation models… 0%";
+  warmupFill.style.width = "0%";
   startWarmupAnim();
 });
 

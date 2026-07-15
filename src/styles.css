@@ -1269,11 +1269,44 @@ body {
   line-height: 1.4;
 }
 
-/* ── Updater status (footer, bottom-right) ── */
+/* ── Model warmup progress (under the Start button) ── */
+.warmup-progress {
+  margin-top: 0.5rem;
+}
+
+/* ── Empty state for the translations feed ── */
+/* Hide the empty list so the hint can center itself in the freed space; the
+   hint disappears as soon as the first phrase lands (pure CSS, no JS). */
+#phrases:empty {
+  display: none;
+}
+#phrases:not(:empty) + .phrases-empty {
+  display: none;
+}
+.phrases-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+/* ── Footer: app version + updater status ── */
 .app-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   margin-top: 0.75rem;
+}
+.app-version {
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  opacity: 0.8;
 }
 .update-status {
   background: none;

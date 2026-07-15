@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { check } from "@tauri-apps/plugin-updater";
@@ -397,3 +398,9 @@ function setupUpdater(): void {
 
 void init();
 setupUpdater();
+
+// Show the running app version in the footer, next to the update status.
+void getVersion().then((v) => {
+  const el = document.getElementById("app-version");
+  if (el) el.textContent = `v${v}`;
+});
